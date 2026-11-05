@@ -11,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+	_ "time/tzdata" // embed the IANA timezone database so schedules work in minimal containers
 
 	"github.com/farhan-hilmy/clockwork/internal/apps"
 	"github.com/farhan-hilmy/clockwork/internal/config"

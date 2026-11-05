@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: clockwork
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clockwork}
+      POSTGRES_DB: clockwork
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clockwork -d clockwork"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  clockwork:
+    build:
+      context: .
+      args:
+        VERSION: ${CLOCKWORK_VERSION:-dev}
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      CLOCKWORK_DATABASE_URL: postgres://clockwork:${POSTGRES_PASSWORD:-clockwork}@db:5432/clockwork?sslmode=disable
+      CLOCKWORK_ADMIN_TOKEN: ${CLOCKWORK_ADMIN_TOKEN:?Set CLOCKWORK_ADMIN_TOKEN in .env (see .env.example)}
+      CLOCKWORK_ENABLE_SHELL: ${CLOCKWORK_ENABLE_SHELL:-false}
+      CLOCKWORK_LOG_FORMAT: ${CLOCKWORK_LOG_FORMAT:-json}
+      CLOCKWORK_LOG_LEVEL: ${CLOCKWORK_LOG_LEVEL:-info}
+    ports:
+      # Bound to localhost only. Put a TLS reverse proxy in front before exposing it.
+      - "127.0.0.1:${CLOCKWORK_PORT:-8080}:8080"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

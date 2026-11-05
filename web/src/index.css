@@ -1,0 +1,42 @@
+@import "tailwindcss";
+
+/* Tokens mirror the "Clockwork" variable collection in the Figma file. */
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --color-canvas: #0b0d10;
+  --color-surface: #12151a;
+  --color-raised: #1a1e25;
+  --color-hover: #21262e;
+  --color-line: #262b33;
+  --color-line-strong: #363c46;
+  --color-fg: #e8eaed;
+  --color-fg-2: #9aa1ac;
+  --color-fg-3: #6b7280;
+  --color-on-accent: #1a1305;
+  --color-brass: #e3a33b;
+  --color-ok: #3fb950;
+  --color-danger: #f85149;
+  --color-warn: #d29922;
+  --color-info: #58a6ff;
+  --color-neutral: #8b949e;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-brass);
+  outline-offset: 2px;
+}
