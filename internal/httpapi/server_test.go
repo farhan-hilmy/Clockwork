@@ -168,11 +168,11 @@ func TestMalformedRequests(t *testing.T) {
 		path, body string
 		want       int
 	}{
-		"bad json":       {"/api/v1/tasks", `{"name":`, 400},
-		"unknown field":  {"/api/v1/tasks", `{"name":"x","oops":true}`, 400},
-		"trailing data":  {"/api/v1/tasks", `{"name":"x"} {}`, 400},
-		"bad limit":      {"/api/v1/tasks?limit=0", "", 400},
-		"unknown route":  {"/api/v1/nope", "", 404},
+		"bad json":      {"/api/v1/tasks", `{"name":`, 400},
+		"unknown field": {"/api/v1/tasks", `{"name":"x","oops":true}`, 400},
+		"trailing data": {"/api/v1/tasks", `{"name":"x"} {}`, 400},
+		"bad limit":     {"/api/v1/tasks?limit=0", "", 400},
+		"unknown route": {"/api/v1/nope", "", 404},
 	}
 	for name, c := range cases {
 		method := "POST"

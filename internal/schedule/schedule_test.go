@@ -16,14 +16,14 @@ func mustTime(t *testing.T, s string) time.Time {
 
 func TestParseRejectsInvalid(t *testing.T) {
 	cases := map[string][2]string{
-		"empty":         {"", "UTC"},
-		"garbage":       {"not a cron", "UTC"},
-		"six fields":    {"0 */5 * * * *", "UTC"},
-		"every":         {"@every 5m", "UTC"},
-		"embedded tz":   {"CRON_TZ=UTC 0 * * * *", "UTC"},
-		"bad timezone":  {"0 * * * *", "Mars/Olympus"},
-		"local tz":      {"0 * * * *", "Local"},
-		"out of range":  {"61 * * * *", "UTC"},
+		"empty":        {"", "UTC"},
+		"garbage":      {"not a cron", "UTC"},
+		"six fields":   {"0 */5 * * * *", "UTC"},
+		"every":        {"@every 5m", "UTC"},
+		"embedded tz":  {"CRON_TZ=UTC 0 * * * *", "UTC"},
+		"bad timezone": {"0 * * * *", "Mars/Olympus"},
+		"local tz":     {"0 * * * *", "Local"},
+		"out of range": {"61 * * * *", "UTC"},
 	}
 	for name, c := range cases {
 		if _, err := Parse(c[0], c[1]); err == nil {

@@ -29,13 +29,13 @@ const taskColumns = `id, application_id, name, description, runner_type, runner_
 
 func scanTask(row pgx.Row) (Task, error) {
 	var (
-		t        Task
-		rtype    string
-		cron     *string
-		tz       string
-		misfire  string
-		concur   string
-		nextRun  *time.Time
+		t       Task
+		rtype   string
+		cron    *string
+		tz      string
+		misfire string
+		concur  string
+		nextRun *time.Time
 	)
 	err := row.Scan(&t.ID, &t.ApplicationID, &t.Name, &t.Description, &rtype, &t.Runner.Config,
 		&cron, &tz, &misfire, &concur,

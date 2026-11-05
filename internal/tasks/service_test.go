@@ -108,8 +108,12 @@ func TestCreateValidation(t *testing.T) {
 		{"schedule.timezone", func(in *CreateInput) { in.Schedule.Timezone = "Mars/Base" }},
 		{"schedule.misfire_policy", func(in *CreateInput) { in.Schedule.MisfirePolicy = "run_all" }},
 		{"timeout_seconds", func(in *CreateInput) { z := 0; in.TimeoutSeconds = &z }},
-		{"retry.max_attempts", func(in *CreateInput) { in.Retry = &RetryPolicy{MaxAttempts: 0, BackoffInitialSeconds: 1, BackoffMaxSeconds: 1} }},
-		{"retry.backoff_max_seconds", func(in *CreateInput) { in.Retry = &RetryPolicy{MaxAttempts: 3, BackoffInitialSeconds: 60, BackoffMaxSeconds: 10} }},
+		{"retry.max_attempts", func(in *CreateInput) {
+			in.Retry = &RetryPolicy{MaxAttempts: 0, BackoffInitialSeconds: 1, BackoffMaxSeconds: 1}
+		}},
+		{"retry.backoff_max_seconds", func(in *CreateInput) {
+			in.Retry = &RetryPolicy{MaxAttempts: 3, BackoffInitialSeconds: 60, BackoffMaxSeconds: 10}
+		}},
 		{"application_id", func(in *CreateInput) { in.ApplicationID = "app_missing" }},
 	}
 	for _, c := range cases {
