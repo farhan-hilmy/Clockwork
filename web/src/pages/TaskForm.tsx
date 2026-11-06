@@ -159,6 +159,8 @@ function Editor({ task, meta, isNew }: { task: Task | null; meta: Meta; isNew: b
   const [saved, setSaved] = useState<Task | null>(task);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [queued, setQueued] = useState("");
 
   useEffect(() => setErrors({}), [f.runnerType]);
 
@@ -209,6 +211,21 @@ function Editor({ task, meta, isNew }: { task: Task | null; meta: Meta; isNew: b
     }
   }
 
+  async function runNow() {
+    if (!saved) return;
+    setRunning(true);
+    setFormError("");
+    setQueued("");
+    try {
+      const e = await api.runTask(saved.id);
+      setQueued(e.id);
+    } catch (ex) {
+      setFormError((ex as Error).message);
+    } finally {
+      setRunning(false);
+    }
+  }
+
   const shellBlocked = f.runnerType === "shell" && !meta.shell_enabled;
 
   return (
@@ -237,10 +254,20 @@ function Editor({ task, meta, isNew }: { task: Task | null; meta: Meta; isNew: b
         }
         actions={
           <>
-            {!isNew && (
-              <Button type="button" variant="ghost" className="hover:text-danger" onClick={() => setConfirmDelete(true)}>
-                Delete
-              </Button>
+            {!isNew && saved && (
+              <>
+                <Button type="button" variant="ghost" className="hover:text-danger" onClick={() => setConfirmDelete(true)}>
+                  Delete
+                </Button>
+                <Link to={`/executions?task_id=${encodeURIComponent(saved.id)}`}>
+                  <Button type="button" variant="ghost">
+                    History
+                  </Button>
+                </Link>
+                <Button type="button" onClick={runNow} disabled={running} title="Queue a run now, even if the task is paused">
+                  {running ? "Queuing…" : "Run now"}
+                </Button>
+              </>
             )}
             <Button type="submit" variant="primary" disabled={saving || shellBlocked}>
               {saving ? "Saving…" : isNew ? "Create task" : "Save changes"}
@@ -252,6 +279,14 @@ function Editor({ task, meta, isNew }: { task: Task | null; meta: Meta; isNew: b
       {formError && (
         <p role="alert" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
           {formError}
+        </p>
+      )}
+      {queued && saved && (
+        <p role="status" className="rounded-md border border-info/40 bg-info/10 px-3 py-2 text-sm text-fg-2">
+          Run queued as <span className="font-mono">{queued}</span>. It stays queued until runners arrive in M3.{" "}
+          <Link to={`/executions?task_id=${encodeURIComponent(saved.id)}`} className="text-fg underline">
+            View history
+          </Link>
         </p>
       )}
 

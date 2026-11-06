@@ -2,20 +2,6 @@ import { api, setToken, type Meta } from "../api";
 import { useAsync } from "../hooks";
 import { Button, Card, EmptyState, ErrorState, PageHeader, Spinner } from "../ui";
 
-export function Executions() {
-  return (
-    <>
-      <PageHeader title="Executions" subtitle="Every attempt of every task, with status, duration and logs." />
-      <Card>
-        <EmptyState
-          title="No executions yet"
-          body="Clockwork does not run tasks yet. The scheduler and runners arrive in milestones M2 and M3; executions will be listed here."
-        />
-      </Card>
-    </>
-  );
-}
-
 export function Integrations() {
   return (
     <>

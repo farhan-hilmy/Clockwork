@@ -32,6 +32,7 @@ One Go binary and one PostgreSQL database. There is no Redis, message broker or 
 | `schedule` | Cron parsing and next-run calculation (timezone/DST aware), with an injectable clock. | M1 (calc) / M2 (loop) |
 | `httpapi` | Routing, JSON encoding, error envelope, auth middleware. | M1 |
 | `scheduler` | Loop that turns due schedules into `queued` executions. Never runs tasks itself. | M2 |
+| `executions` | Execution model, history queries, manual "run now". | M2 |
 | `executor` | Worker pool: claims queued executions, applies timeout and retry, records results. | M3/M4 |
 | `runners` | `Runner` interface plus `http` and `shell` implementations. | M3 |
 | `apps` | Application identity, API keys, ownership checks. | M5 |
@@ -55,13 +56,19 @@ IDs are prefixed ULIDs (`tsk_…`, `exe_…`, `app_…`). They sort by creation 
 
 **Separation.** The scheduler only inserts `queued` executions for due occurrences and advances `next_run_at`, in one transaction. Workers pick up queued rows independently, so a slow task cannot delay scheduling.
 
-**One claim per occurrence.** `executions` has a unique key on `(task_id, scheduled_for)`. A second scheduler instance inserting the same occurrence hits the constraint and skips it. Workers claim rows with `SELECT … FOR UPDATE SKIP LOCKED`. This is the "claimer" interface; a distributed implementation can replace it later without touching runners.
+**One claim per occurrence.** `executions` has a unique key on `(task_id, scheduled_for, attempt)`. A second scheduler instance inserting the same occurrence hits the constraint and skips it. Workers claim rows with `SELECT … FOR UPDATE SKIP LOCKED`. This is the "claimer" interface; a distributed implementation can replace it later without touching runners.
 
 **Delivery is at-least-once, not exactly-once.** If the process dies after a runner has caused a side effect but before the result is saved, the recovered execution may run again. Clockwork does not claim exactly-once execution of external side effects. Integrations should send an `Idempotency-Key` and make their own endpoints idempotent.
 
+**On time vs. missed.** Each pass (every `CLOCKWORK_SCHEDULER_INTERVAL`, default 1s) locks due tasks with `FOR UPDATE SKIP LOCKED`. An occurrence queued no more than `CLOCKWORK_MISFIRE_GRACE` (default 1m) after its time is on time and is always queued. Older occurrences are missed.
+
 **Missed runs** (process was down when a run was due), per task:
 - `skip` (default): record nothing and move `next_run_at` to the next future time.
-- `run_once`: enqueue a single catch-up run, then continue from now.
+- `run_once`: enqueue a single catch-up run, then continue from now. The catch-up uses the earliest missed occurrence as `scheduled_for`. If an on-time occurrence is queued in the same pass, that run serves as the catch-up.
+
+**Edits.** Changing a task's cron or timezone, or resuming it, recomputes `next_run_at` from now. Other edits keep the pending occurrence, so editing a task as it falls due does not drop the run. If such an edit races with the scheduler and writes back an occurrence that was already queued, the unique key rejects the duplicate.
+
+**Manual runs.** `POST /tasks/{id}/run` inserts a `queued` execution with trigger `manual` and no `scheduled_for`. It works for paused and unscheduled tasks.
 
 `run_all` replay is deliberately left out of the MVP.
 

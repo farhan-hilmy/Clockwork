@@ -76,6 +76,38 @@ export interface TaskPage {
   next_cursor?: string;
 }
 
+export type ExecutionStatus = "queued" | "running" | "succeeded" | "failed" | "retrying" | "interrupted" | "canceled" | "skipped";
+export const executionStatuses: ExecutionStatus[] = ["queued", "running", "succeeded", "failed", "retrying", "interrupted", "canceled", "skipped"];
+
+export interface Execution {
+  id: string;
+  task_id: string;
+  task_name: string;
+  application_id: string;
+  trigger: "scheduled" | "manual" | "api";
+  status: ExecutionStatus;
+  attempt: number;
+  scheduled_for: string | null;
+  output: unknown;
+  error: unknown;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  duration_ms: number | null;
+}
+
+export interface ExecutionPage {
+  executions: Execution[];
+  next_cursor?: string;
+}
+
+function query(params: Record<string, string | number | boolean | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") qs.set(k, String(v));
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
+
 /** Error returned by the API, carrying per-field validation details when present. */
 export class ApiError extends Error {
   constructor(
@@ -143,16 +175,16 @@ export const api = {
   /** Checks a candidate token without storing it. */
   verifyToken: (token: string) => request<Meta>("GET", "/meta", undefined, token),
   applications: () => request<{ applications: Application[] }>("GET", "/applications").then((r) => r.applications),
-  listTasks: (params: { q?: string; enabled?: boolean; application_id?: string; cursor?: string; limit?: number } = {}) => {
-    const qs = new URLSearchParams();
-    for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== "") qs.set(k, String(v));
-    const s = qs.toString();
-    return request<TaskPage>("GET", `/tasks${s ? `?${s}` : ""}`);
-  },
+  listTasks: (params: { q?: string; enabled?: boolean; application_id?: string; cursor?: string; limit?: number } = {}) =>
+    request<TaskPage>("GET", `/tasks${query(params)}`),
   getTask: (id: string) => request<Task>("GET", `/tasks/${encodeURIComponent(id)}`),
   createTask: (input: TaskInput) => request<Task>("POST", "/tasks", input),
   updateTask: (id: string, input: Partial<TaskInput>) => request<Task>("PATCH", `/tasks/${encodeURIComponent(id)}`, input),
   setEnabled: (id: string, enabled: boolean) =>
     request<Task>("POST", `/tasks/${encodeURIComponent(id)}/${enabled ? "enable" : "disable"}`),
   deleteTask: (id: string) => request<void>("DELETE", `/tasks/${encodeURIComponent(id)}`),
+  /** Queues an immediate run of a task. */
+  runTask: (id: string) => request<Execution>("POST", `/tasks/${encodeURIComponent(id)}/run`),
+  listExecutions: (params: { task_id?: string; status?: ExecutionStatus | ""; cursor?: string; limit?: number } = {}) =>
+    request<ExecutionPage>("GET", `/executions${query(params)}`),
 };

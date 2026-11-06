@@ -106,6 +106,7 @@ func TestCreateValidation(t *testing.T) {
 		{"runner.config.expected_status", func(in *CreateInput) { in.Runner = httpRunner(`{"url":"https://x.dev","expected_status":[700]}`) }},
 		{"schedule.cron", func(in *CreateInput) { in.Schedule.Cron = "every day" }},
 		{"schedule.timezone", func(in *CreateInput) { in.Schedule.Timezone = "Mars/Base" }},
+		{"schedule.cron", func(in *CreateInput) { in.Schedule.Cron = "0 0 30 2 *" }}, // February 30 never comes
 		{"schedule.misfire_policy", func(in *CreateInput) { in.Schedule.MisfirePolicy = "run_all" }},
 		{"timeout_seconds", func(in *CreateInput) { z := 0; in.TimeoutSeconds = &z }},
 		{"retry.max_attempts", func(in *CreateInput) {
@@ -220,6 +221,45 @@ func TestPauseAndResume(t *testing.T) {
 	}
 	if !resumed.Enabled || resumed.NextRunAt == nil {
 		t.Fatalf("resumed task should have a next run: %+v", resumed)
+	}
+}
+
+func TestUpdateKeepsPendingRunUnlessTimingChanges(t *testing.T) {
+	repo := NewMemoryRepository()
+	now := fixedNow // 14:02:30; */5 next fires at 14:05
+	svc := NewService(repo, Options{Now: func() time.Time { return now }})
+	ctx := context.Background()
+	created, err := svc.Create(ctx, validInput())
+	if err != nil {
+		t.Fatal(err)
+	}
+	due := *created.NextRunAt
+
+	// An edit made after the run fell due, but before the scheduler picked it up, keeps it pending.
+	now = due.Add(500 * time.Millisecond)
+	renamed, err := svc.Update(ctx, created.ID, UpdateInput{Name: Some("renamed"), Schedule: Some(&Schedule{Cron: "*/5 * * * *", Timezone: "Asia/Jakarta", MisfirePolicy: MisfireRunOnce})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !renamed.NextRunAt.Equal(due) {
+		t.Fatalf("rename moved next_run_at to %v, want %v", renamed.NextRunAt, due)
+	}
+
+	// Changing the cron recomputes from now.
+	rescheduled, err := svc.Update(ctx, created.ID, UpdateInput{Schedule: Some(&Schedule{Cron: "0 * * * *"})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 11, 5, 15, 0, 0, 0, time.UTC); !rescheduled.NextRunAt.Equal(want) {
+		t.Fatalf("next_run_at = %v, want %v", rescheduled.NextRunAt, want)
+	}
+
+	// Resuming a paused task starts from now: runs missed while paused are not owed.
+	_, _ = svc.SetEnabled(ctx, created.ID, false)
+	now = now.Add(3 * time.Hour)
+	resumed, _ := svc.SetEnabled(ctx, created.ID, true)
+	if !resumed.NextRunAt.After(now) {
+		t.Fatalf("resumed next_run_at %v is not after now %v", resumed.NextRunAt, now)
 	}
 }
 

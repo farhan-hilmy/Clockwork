@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/farhan-hilmy/clockwork/internal/apps"
+	"github.com/farhan-hilmy/clockwork/internal/executions"
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
 )
 
@@ -27,6 +28,7 @@ type Pinger interface {
 // Deps are the services the HTTP layer needs.
 type Deps struct {
 	Tasks      *tasks.Service
+	Executions *executions.Service
 	Apps       apps.Lister
 	DB         Pinger
 	AdminToken string
@@ -61,6 +63,7 @@ func NewRouter(d Deps) http.Handler {
 	})
 
 	h := &taskHandlers{svc: d.Tasks, log: d.Logger}
+	eh := &executionHandlers{svc: d.Executions, tasks: h}
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(bearerAuth(d.AdminToken))
 		api.Get("/meta", func(w http.ResponseWriter, _ *http.Request) {
@@ -85,6 +88,9 @@ func NewRouter(d Deps) http.Handler {
 		api.Delete("/tasks/{id}", h.delete)
 		api.Post("/tasks/{id}/enable", h.setEnabled(true))
 		api.Post("/tasks/{id}/disable", h.setEnabled(false))
+		api.Post("/tasks/{id}/run", eh.run)
+		api.Get("/executions", eh.list)
+		api.Get("/executions/{id}", eh.get)
 		api.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "no such endpoint", nil)
 		})

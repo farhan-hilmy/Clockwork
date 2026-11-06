@@ -4,7 +4,7 @@ Transcend Beyond the Clock.
 
 Clockwork is a lightweight, self-hosted automation and task scheduling platform for developers. Define an automation once, schedule it, and let Clockwork run it reliably, whether the task belongs to Clockwork itself or to an external application.
 
-> **Status: Milestone 1 (Foundation).** You can create, edit, pause and delete tasks with cron schedules through the UI and API. Tasks are **not executed yet**. The scheduler and runners arrive in M2 and M3. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
+> **Status: Milestone 2 (Scheduling).** You can create, edit, pause and delete tasks with cron schedules through the UI and API. The scheduler queues an execution each time a task is due, and **Run now** queues one on demand. Queued executions are **not run yet**: runners arrive in M3. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
 
 ## Quick start (Docker Compose)
 
@@ -34,6 +34,8 @@ All configuration comes from environment variables. The server refuses to start 
 | `CLOCKWORK_LOG_FORMAT` | `json` | `json` or `text`. |
 | `CLOCKWORK_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `CLOCKWORK_SHUTDOWN_TIMEOUT` | `30s` | Grace period for in-flight requests on SIGTERM. |
+| `CLOCKWORK_SCHEDULER_INTERVAL` | `1s` | How often the scheduler looks for due tasks (100ms to 1m). |
+| `CLOCKWORK_MISFIRE_GRACE` | `1m` | How late a run can be queued and still count as on time (1s to 24h). Later runs are misfires and follow the task's `misfire_policy`. |
 
 ## API
 
@@ -51,6 +53,9 @@ Every `/api/v1` request needs `Authorization: Bearer <CLOCKWORK_ADMIN_TOKEN>`.
 | `PATCH /api/v1/tasks/{id}` | Partial update. Send `"schedule": null` to remove the schedule. |
 | `POST /api/v1/tasks/{id}/enable` and `/disable` | Resume or pause a task. |
 | `DELETE /api/v1/tasks/{id}` | Delete a task and its history. |
+| `POST /api/v1/tasks/{id}/run` | Queue a run now (`202`), even if the task is paused or unscheduled. |
+| `GET /api/v1/executions?task_id=&status=&limit=&cursor=` | List executions, newest first. |
+| `GET /api/v1/executions/{id}` | Get one execution. |
 
 Example:
 
@@ -85,7 +90,10 @@ Secret-looking headers, query parameters and environment variables (`Authorizati
   - A local time that doesn't exist on the day clocks spring forward is skipped.
   - A job pinned to a specific hour runs once on the day clocks fall back.
   - Interval jobs such as `*/5` keep running through the repeated hour.
-- `misfire_policy`: `skip` (default) or `run_once`. `concurrency_policy`: `forbid` (default) or `allow`. Both take effect once the scheduler ships in M2. Their semantics are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#3-scheduling-and-execution-semantics).
+- `misfire_policy` decides what happens to runs missed while Clockwork was down (more than `CLOCKWORK_MISFIRE_GRACE` late): `skip` (default) drops them, `run_once` queues a single catch-up run. Either way, the schedule then continues from now.
+- `concurrency_policy`: `forbid` (default) or `allow`. It takes effect when execution ships (M4).
+- Editing a task's name, runner or retry settings keeps its pending run. Changing the cron or timezone, or resuming a paused task, recomputes the next run from now. Runs missed while a task was paused are not owed.
+- Semantics are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#3-scheduling-and-execution-semantics).
 
 ## Development
 
@@ -112,8 +120,9 @@ Migrations run automatically at startup. They live in `internal/store/migrations
 ```sh
 go test ./...                       # unit + HTTP tests (no database needed)
 
-# Postgres integration tests (uses and truncates the given database)
-CLOCKWORK_TEST_DATABASE_URL="postgres://postgres:dev@localhost:5432/clockwork_test?sslmode=disable" go test ./...
+# Postgres integration tests (uses and truncates the given database).
+# -p 1: several packages share the database, so they must not run in parallel.
+CLOCKWORK_TEST_DATABASE_URL="postgres://postgres:dev@localhost:5432/clockwork_test?sslmode=disable" go test -p 1 ./...
 
 cd web && npm test && npm run build # UI unit tests, typecheck, production build
 ```

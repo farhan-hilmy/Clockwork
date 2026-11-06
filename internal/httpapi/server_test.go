@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"github.com/farhan-hilmy/clockwork/internal/apps"
+	"github.com/farhan-hilmy/clockwork/internal/executions"
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
 )
 
@@ -31,9 +32,11 @@ func (fakeApps) List(context.Context) ([]apps.Application, error) {
 
 func newTestServer(t *testing.T, db Pinger, webDir string) *httptest.Server {
 	t.Helper()
-	svc := tasks.NewService(tasks.NewMemoryRepository(), tasks.Options{})
+	repo := tasks.NewMemoryRepository()
+	svc := tasks.NewService(repo, tasks.Options{})
+	execs := executions.NewService(executions.NewMemoryRepository(repo.Get), nil)
 	h := NewRouter(Deps{
-		Tasks: svc, Apps: fakeApps{}, DB: db, AdminToken: token, WebDir: webDir,
+		Tasks: svc, Executions: execs, Apps: fakeApps{}, DB: db, AdminToken: token, WebDir: webDir,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	srv := httptest.NewServer(h)
@@ -144,6 +147,42 @@ func TestTaskLifecycleOverHTTP(t *testing.T) {
 	}
 	if code, _ := call(t, srv, "GET", "/api/v1/tasks/"+id, "", true); code != 404 {
 		t.Fatalf("get after delete = %d", code)
+	}
+}
+
+func TestRunNowAndExecutionsOverHTTP(t *testing.T) {
+	srv := newTestServer(t, fakePinger{}, "")
+	_, created := call(t, srv, "POST", "/api/v1/tasks", validTask, true)
+	id, _ := created["id"].(string)
+
+	code, run := call(t, srv, "POST", "/api/v1/tasks/"+id+"/run", "", true)
+	if code != 202 || run["status"] != "queued" || run["trigger"] != "manual" || run["task_name"] != "health-check" {
+		t.Fatalf("run = %d %v", code, run)
+	}
+	exeID, _ := run["id"].(string)
+
+	if code, got := call(t, srv, "GET", "/api/v1/executions/"+exeID, "", true); code != 200 || got["task_id"] != id {
+		t.Fatalf("get execution = %d %v", code, got)
+	}
+	code, list := call(t, srv, "GET", "/api/v1/executions?task_id="+id+"&status=queued", "", true)
+	if items, _ := list["executions"].([]any); code != 200 || len(items) != 1 {
+		t.Fatalf("list = %d %v", code, list)
+	}
+
+	for path, want := range map[string]int{
+		"/api/v1/executions/exe_missing":  404,
+		"/api/v1/executions?status=bogus": 400,
+		"/api/v1/executions?limit=500":    400,
+	} {
+		if code, _ := call(t, srv, "GET", path, "", true); code != want {
+			t.Errorf("GET %s = %d, want %d", path, code, want)
+		}
+	}
+	if code, _ := call(t, srv, "POST", "/api/v1/tasks/tsk_missing/run", "", true); code != 404 {
+		t.Errorf("run missing task = %d", code)
+	}
+	if code, _ := call(t, srv, "POST", "/api/v1/tasks/"+id+"/run", "", false); code != 401 {
+		t.Errorf("unauthenticated run = %d", code)
 	}
 }
 

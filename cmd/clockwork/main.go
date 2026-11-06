@@ -15,7 +15,9 @@ import (
 
 	"github.com/farhan-hilmy/clockwork/internal/apps"
 	"github.com/farhan-hilmy/clockwork/internal/config"
+	"github.com/farhan-hilmy/clockwork/internal/executions"
 	"github.com/farhan-hilmy/clockwork/internal/httpapi"
+	"github.com/farhan-hilmy/clockwork/internal/scheduler"
 	"github.com/farhan-hilmy/clockwork/internal/store"
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
 )
@@ -57,10 +59,25 @@ func run() error {
 		logger.Warn("shell runner is ENABLED: anyone with the admin token can run commands as this process's user")
 	}
 
+	// The scheduler stops with ctx (SIGTERM); wait for its in-flight pass to finish
+	// or roll back before the pool closes.
+	sched := scheduler.New(pool, scheduler.Options{
+		Interval:     cfg.SchedulerInterval,
+		MisfireGrace: cfg.MisfireGrace,
+		Logger:       logger,
+	})
+	schedDone := make(chan struct{})
+	go func() {
+		defer close(schedDone)
+		sched.Run(ctx)
+	}()
+	defer func() { stop(); <-schedDone }() // stop() also covers returning on an HTTP server error
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(httpapi.Deps{
 			Tasks:      taskSvc,
+			Executions: executions.NewService(executions.NewPostgresRepository(pool), nil),
 			Apps:       apps.NewPostgresRepository(pool),
 			DB:         pool,
 			AdminToken: cfg.AdminToken,

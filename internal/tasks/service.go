@@ -135,6 +135,7 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Task, 
 	if err != nil {
 		return Task{}, err
 	}
+	prev := t
 	stored := t.Runner
 	fe := fieldErrors{}
 	if in.Name.Set {
@@ -161,6 +162,13 @@ func (s *Service) Update(ctx context.Context, id string, in UpdateInput) (Task, 
 	t.UpdatedAt = s.now()
 	if err := s.finalize(&t, fe); err != nil {
 		return Task{}, err
+	}
+	// Edits that leave the timing alone keep the pending occurrence. Recomputing it
+	// from now would drop a run that is due but not yet picked up by the scheduler.
+	// If this read was stale and the scheduler already materialised that occurrence,
+	// the unique index on executions keeps it from running twice.
+	if t.Enabled && prev.Enabled && prev.NextRunAt != nil && sameTiming(prev.Schedule, t.Schedule) {
+		t.NextRunAt = prev.NextRunAt
 	}
 	if err := s.repo.Update(ctx, t); err != nil {
 		return Task{}, err
@@ -230,13 +238,22 @@ func (s *Service) finalize(t *Task, fe fieldErrors) error {
 				field = "schedule.timezone"
 			}
 			fe.add(field, "%v", err)
+		} else if next := spec.Next(s.now()); next.IsZero() {
+			fe.add("schedule.cron", "never matches a date, for example February 30")
 		} else if t.Enabled {
-			next := spec.Next(s.now())
 			t.NextRunAt = &next
 		}
 		t.Schedule = &sc
 	}
 	return fe.err()
+}
+
+// sameTiming reports whether two normalised schedules fire at the same times.
+func sameTiming(a, b *Schedule) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Cron == b.Cron && a.Timezone == b.Timezone
 }
 
 func redacted(t Task) Task {
