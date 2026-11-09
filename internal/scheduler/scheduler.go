@@ -159,8 +159,8 @@ func (s *Scheduler) schedule(ctx context.Context, tx pgx.Tx, d dueTask, now time
 	for _, at := range p.occurrences {
 		// ON CONFLICT: another scheduler (or a stale write of next_run_at) already
 		// materialised this occurrence. It must run once, so ours is dropped.
-		tag, err := tx.Exec(ctx, `INSERT INTO executions (id, task_id, application_id, trigger, status, attempt, scheduled_for, created_at)
-			SELECT $1, id, application_id, $3, $4, 1, $5, $6 FROM tasks WHERE id = $2
+		tag, err := tx.Exec(ctx, `INSERT INTO executions (id, task_id, application_id, trigger, status, attempt, scheduled_for, created_at, run_after)
+			SELECT $1, id, application_id, $3, $4, 1, $5, $6, $6 FROM tasks WHERE id = $2
 			ON CONFLICT DO NOTHING`,
 			ids.New("exe"), d.id, executions.TriggerScheduled, executions.StatusQueued, at, now)
 		if err != nil {

@@ -51,6 +51,7 @@ type Execution struct {
 	Output        json.RawMessage `json:"output"`
 	Error         json.RawMessage `json:"error"`
 	CreatedAt     time.Time       `json:"created_at"`
+	RunAfter      time.Time       `json:"run_after"` // earliest start; later than created_at for retries
 	StartedAt     *time.Time      `json:"started_at"`
 	FinishedAt    *time.Time      `json:"finished_at"`
 	DurationMS    *int64          `json:"duration_ms"`

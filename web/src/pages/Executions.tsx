@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, executionStatuses, type Execution, type ExecutionStatus } from "../api";
 import { formatDateTime, relativeTime } from "../format";
 import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Spinner, inputClass } from "../ui";
+import { ExecutionDetail } from "./ExecutionDetail";
 
 const statusTone: Record<ExecutionStatus, "ok" | "danger" | "info" | "warn" | "neutral"> = {
   queued: "info",
@@ -28,6 +29,7 @@ export function Executions() {
   const [error, setError] = useState<Error | null>(null);
   const [nonce, setNonce] = useState(0);
   const [moreError, setMoreError] = useState("");
+  const [open, setOpen] = useState<string | null>(null);
   // Once the user loads more pages, auto-refresh stops so it cannot drop those rows.
   const extended = useRef(false);
 
@@ -101,11 +103,6 @@ export function Executions() {
         actions={<Button onClick={() => setNonce((n) => n + 1)}>Refresh</Button>}
       />
 
-      <p className="rounded-md border border-info/40 bg-info/10 px-3 py-2 text-sm text-fg-2">
-        The scheduler queues a run each time a task is due, and <span className="font-medium text-fg">Run now</span> queues one immediately.
-        Runners arrive in M3; until then, runs stay <span className="font-mono">queued</span>.
-      </p>
-
       <div className="flex flex-wrap items-center gap-2">
         <select
           aria-label="Filter by status"
@@ -161,15 +158,23 @@ export function Executions() {
               </thead>
               <tbody>
                 {items.map((e) => (
-                  <tr key={e.id} className="border-t border-line align-middle hover:bg-raised/40">
+                  <Fragment key={e.id}>
+                  <tr
+                    className={`cursor-pointer border-t border-line align-middle hover:bg-raised/40 ${open === e.id ? "bg-raised/40" : ""}`}
+                    onClick={() => setOpen((o) => (o === e.id ? null : e.id))}
+                    aria-expanded={open === e.id}
+                  >
                     <td className="max-w-[300px] px-4 py-2.5">
-                      <Link to={`/tasks/${e.task_id}`} className="block truncate font-medium hover:underline">
+                      <Link to={`/tasks/${e.task_id}`} onClick={(ev) => ev.stopPropagation()} className="block truncate font-medium hover:underline">
                         {e.task_name}
                       </Link>
                       <span className="block truncate font-mono text-[11px] text-fg-3">{e.id}</span>
                     </td>
                     <td className="px-4 py-2.5">
                       <Badge tone={statusTone[e.status]}>{e.status}</Badge>
+                      {e.status === "queued" && e.attempt > 1 && (
+                        <span className="block font-mono text-[11px] text-fg-3">retry {relativeTime(e.run_after)}</span>
+                      )}
                     </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-fg-2">
                       {e.trigger}
@@ -181,6 +186,14 @@ export function Executions() {
                     </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-fg-2">{e.duration_ms == null ? "—" : `${e.duration_ms} ms`}</td>
                   </tr>
+                  {open === e.id && (
+                    <tr className="border-t border-line bg-raised/20">
+                      <td colSpan={6}>
+                        <ExecutionDetail e={e} />
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>

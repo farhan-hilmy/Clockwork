@@ -16,3 +16,6 @@ web/dist/
 .vscode/
 .idea/
 .DS_Store
+
+# Local browser-automation artifacts
+.playwright-mcp/

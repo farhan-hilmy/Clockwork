@@ -19,7 +19,7 @@ func TestLoadDefaults(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.HTTPAddr != ":8080" || cfg.EnableShell || cfg.ShutdownTimeout != 30*time.Second || cfg.LogFormat != "json" ||
-		cfg.SchedulerInterval != time.Second || cfg.MisfireGrace != time.Minute {
+		cfg.SchedulerInterval != time.Second || cfg.MisfireGrace != time.Minute || cfg.Workers != 4 || cfg.HTTPDenyPrivate {
 		t.Fatalf("unexpected defaults: %+v", cfg)
 	}
 }
@@ -45,11 +45,13 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		"CLOCKWORK_LOG_FORMAT":         "xml",
 		"CLOCKWORK_SCHEDULER_INTERVAL": "1h",
 		"CLOCKWORK_MISFIRE_GRACE":      "later",
+		"CLOCKWORK_WORKERS":            "0",
+		"CLOCKWORK_HTTP_DENY_PRIVATE":  "sometimes",
 	}))
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	for _, want := range []string{"ENABLE_SHELL", "SHUTDOWN_TIMEOUT", "LOG_FORMAT", "SCHEDULER_INTERVAL must be between", "MISFIRE_GRACE"} {
+	for _, want := range []string{"ENABLE_SHELL", "SHUTDOWN_TIMEOUT", "LOG_FORMAT", "SCHEDULER_INTERVAL must be between", "MISFIRE_GRACE", "WORKERS", "HTTP_DENY_PRIVATE"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %q", err, want)
 		}

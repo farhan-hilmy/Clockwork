@@ -76,11 +76,13 @@ IDs are prefixed ULIDs (`tsk_…`, `exe_…`, `app_…`). They sort by creation 
 - `forbid` (default): if a run of the task is still active, the new occurrence is recorded as skipped.
 - `allow`: runs overlap, up to the global worker limit.
 
-**Retries.** Runners return errors classified as retryable (timeouts, connection errors, HTTP 5xx/429) or not (validation errors, unexpected 4xx). Retryable failures are re-queued with exponential backoff, from `backoff_initial_seconds` up to `backoff_max_seconds`, until `max_attempts` is reached.
+**Execution.** A single dispatcher claims the oldest `queued` execution whose `run_after` has passed, using `FOR UPDATE SKIP LOCKED`, and hands it to a worker. At most `CLOCKWORK_WORKERS` executions run at once. The worker runs the task's runner under `timeout_seconds` and records `status`, `output`, `error`, `started_at`, `finished_at` and `duration_ms`. The update only applies while the row is still `running`, so a row that was reassigned in the meantime is left to its new owner. A panicking runner fails its execution rather than the pool.
 
-**Crash recovery.** A claimed execution carries a lease that the worker extends while the task runs. On startup, and periodically, executions whose lease has expired are marked `interrupted` and then go through the retry policy.
+**Retries.** Runners return errors classified as retryable (timeouts, connection errors, HTTP 5xx/429/408, non-zero shell exits) or not (invalid config, unexpected other status, blocked target). After a retryable failure, if attempts remain, the attempt is marked `retrying` and the next attempt is inserted in the same transaction as a new `queued` execution with `attempt + 1`, the same trigger and `scheduled_for`, and `run_after = now + backoff`. The backoff is `backoff_initial_seconds × 2^(attempt-1)`, capped at `backoff_max_seconds`.
 
-**Graceful shutdown.** On SIGTERM: stop the scheduler, stop claiming, wait for in-flight runs up to a grace period, then cancel their contexts, which kills shell process groups. Unfinished runs are left for lease recovery.
+**Crash recovery (M4).** A claimed execution carries a lease (`lease_expires_at`). In M3 it is set to the task timeout plus a minute and is not yet extended or recovered. In M4 the worker extends it while the task runs, and executions whose lease has expired are marked `interrupted` and go through the retry policy, on startup and periodically.
+
+**Graceful shutdown.** On SIGTERM: the scheduler stops, the executor stops claiming, and in-flight runs may continue for `CLOCKWORK_SHUTDOWN_TIMEOUT`. Runs still going are then canceled (killing shell process groups) and recorded as `interrupted`, without retry. The database pool closes only after every run is recorded. M4 revisits whether interrupted runs are retried.
 
 ## 4. APIs
 
@@ -97,7 +99,7 @@ IDs are prefixed ULIDs (`tsk_…`, `exe_…`, `app_…`). They sort by creation 
 | Unauthenticated access | Every `/api/v1` route requires a bearer token. In M1 that is the admin token (`CLOCKWORK_ADMIN_TOKEN`), compared in constant time; the server refuses to start without one. |
 | Arbitrary command execution | Shell tasks are disabled unless `CLOCKWORK_ENABLE_SHELL=true`. External applications will never be allowed to create shell tasks. Runs get a timeout, a process-group kill, an output size cap, and only the environment variables set on the task. Running Clockwork as a non-root user in a container is strongly recommended. |
 | Credential leakage | Sensitive HTTP headers and shell environment variables are masked as `********` in every API response and log. Sending the mask back on update keeps the stored value. API keys are stored hashed (M5). |
-| SSRF via HTTP tasks | `CLOCKWORK_HTTP_DENY_PRIVATE=true` (M3) rejects loopback, link-local and private targets for app-owned tasks. |
+| SSRF via HTTP tasks | `CLOCKWORK_HTTP_DENY_PRIVATE=true` rejects loopback, link-local, private and other non-public targets, checked on the resolved address at connect time (so DNS rebinding is covered) with proxies disabled. In M3 it applies to every task; M5 may enforce it for app-owned tasks regardless of the flag. |
 | Oversized input | Request bodies are capped at 1 MiB, and runner configs and stored output excerpts are bounded. |
 | Webhook spoofing | Deliveries are HMAC-SHA256 signed with a per-endpoint secret and timestamp (M6). |
 

@@ -61,14 +61,16 @@ func (s *Service) List(ctx context.Context, p ListParams) (Page, error) {
 }
 
 // RunNow queues an immediate run of a task, whether or not it is enabled or scheduled.
-// The run is picked up by the executor (M3); until then it stays queued.
+// A worker picks it up within a second or so.
 func (s *Service) RunNow(ctx context.Context, taskID string) (Execution, error) {
+	now := s.now()
 	return s.repo.Enqueue(ctx, Execution{
 		ID:        ids.New("exe"),
 		TaskID:    taskID,
 		Trigger:   TriggerManual,
 		Status:    StatusQueued,
 		Attempt:   1,
-		CreatedAt: s.now(),
+		CreatedAt: now,
+		RunAfter:  now,
 	})
 }

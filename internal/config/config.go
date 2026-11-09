@@ -27,6 +27,11 @@ type Config struct {
 	// MisfireGrace is how late an occurrence may be materialised and still count as on time.
 	// Later occurrences are misfires and follow the task's misfire policy.
 	MisfireGrace time.Duration
+
+	// Workers is how many executions may run at once.
+	Workers int
+	// HTTPDenyPrivate makes HTTP tasks refuse loopback, link-local and private targets.
+	HTTPDenyPrivate bool
 }
 
 // Load reads configuration using getenv (os.Getenv in production) and validates it.
@@ -79,6 +84,16 @@ func Load(getenv func(string) string) (Config, error) {
 
 	cfg.SchedulerInterval = duration(get, "CLOCKWORK_SCHEDULER_INTERVAL", "1s", 100*time.Millisecond, time.Minute, &errs)
 	cfg.MisfireGrace = duration(get, "CLOCKWORK_MISFIRE_GRACE", "1m", time.Second, 24*time.Hour, &errs)
+
+	cfg.Workers, err = strconv.Atoi(get("CLOCKWORK_WORKERS", "4"))
+	if err != nil || cfg.Workers < 1 || cfg.Workers > 256 {
+		errs = append(errs, fmt.Errorf("CLOCKWORK_WORKERS must be an integer between 1 and 256"))
+	}
+
+	cfg.HTTPDenyPrivate, err = strconv.ParseBool(get("CLOCKWORK_HTTP_DENY_PRIVATE", "false"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("CLOCKWORK_HTTP_DENY_PRIVATE: %w", err))
+	}
 
 	return cfg, errors.Join(errs...)
 }

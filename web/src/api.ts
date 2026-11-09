@@ -91,9 +91,36 @@ export interface Execution {
   output: unknown;
   error: unknown;
   created_at: string;
+  run_after: string;
   started_at: string | null;
   finished_at: string | null;
   duration_ms: number | null;
+}
+
+/** executions.error: why an attempt failed, and when the next attempt runs if it was retried. */
+export interface ExecutionError {
+  kind: string;
+  message: string;
+  retryable: boolean;
+  retry_at?: string;
+}
+
+/** executions.output for HTTP tasks. */
+export interface HttpOutput {
+  status_code: number;
+  content_type?: string;
+  body: string;
+  body_truncated: boolean;
+  body_bytes: number;
+}
+
+/** executions.output for shell tasks. */
+export interface ShellOutput {
+  exit_code: number;
+  stdout: string;
+  stdout_truncated: boolean;
+  stderr: string;
+  stderr_truncated: boolean;
 }
 
 export interface ExecutionPage {

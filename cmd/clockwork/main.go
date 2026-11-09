@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 	_ "time/tzdata" // embed the IANA timezone database so schedules work in minimal containers
@@ -16,7 +17,9 @@ import (
 	"github.com/farhan-hilmy/clockwork/internal/apps"
 	"github.com/farhan-hilmy/clockwork/internal/config"
 	"github.com/farhan-hilmy/clockwork/internal/executions"
+	"github.com/farhan-hilmy/clockwork/internal/executor"
 	"github.com/farhan-hilmy/clockwork/internal/httpapi"
+	"github.com/farhan-hilmy/clockwork/internal/runners"
 	"github.com/farhan-hilmy/clockwork/internal/scheduler"
 	"github.com/farhan-hilmy/clockwork/internal/store"
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
@@ -59,19 +62,34 @@ func run() error {
 		logger.Warn("shell runner is ENABLED: anyone with the admin token can run commands as this process's user")
 	}
 
-	// The scheduler stops with ctx (SIGTERM); wait for its in-flight pass to finish
-	// or roll back before the pool closes.
+	run := map[tasks.RunnerType]runners.Runner{
+		tasks.RunnerHTTP: runners.NewHTTP(runners.HTTPOptions{DenyPrivate: cfg.HTTPDenyPrivate, UserAgent: "Clockwork/" + version}),
+	}
+	if cfg.EnableShell {
+		run[tasks.RunnerShell] = &runners.Shell{}
+	}
+	if cfg.HTTPDenyPrivate {
+		logger.Info("HTTP tasks may only reach public addresses (CLOCKWORK_HTTP_DENY_PRIVATE=true)")
+	}
+
+	// The scheduler and executor stop with ctx (SIGTERM). Wait for both before the
+	// database pool closes: the scheduler's pass finishes or rolls back, and the
+	// executor records every in-flight run (interrupting them after the grace period).
 	sched := scheduler.New(pool, scheduler.Options{
 		Interval:     cfg.SchedulerInterval,
 		MisfireGrace: cfg.MisfireGrace,
 		Logger:       logger,
 	})
-	schedDone := make(chan struct{})
-	go func() {
-		defer close(schedDone)
-		sched.Run(ctx)
-	}()
-	defer func() { stop(); <-schedDone }() // stop() also covers returning on an HTTP server error
+	exec := executor.New(pool, executor.Options{
+		Workers:       cfg.Workers,
+		ShutdownGrace: cfg.ShutdownTimeout,
+		Runners:       run,
+		Logger:        logger,
+	})
+	var background sync.WaitGroup
+	background.Go(func() { sched.Run(ctx) })
+	background.Go(func() { exec.Run(ctx) })
+	defer func() { stop(); background.Wait() }() // stop() also covers returning on an HTTP server error
 
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,

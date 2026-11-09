@@ -283,7 +283,7 @@ function Editor({ task, meta, isNew }: { task: Task | null; meta: Meta; isNew: b
       )}
       {queued && saved && (
         <p role="status" className="rounded-md border border-info/40 bg-info/10 px-3 py-2 text-sm text-fg-2">
-          Run queued as <span className="font-mono">{queued}</span>. It stays queued until runners arrive in M3.{" "}
+          Run queued as <span className="font-mono">{queued}</span>. A worker picks it up within a second or so.{" "}
           <Link to={`/executions?task_id=${encodeURIComponent(saved.id)}`} className="text-fg underline">
             View history
           </Link>

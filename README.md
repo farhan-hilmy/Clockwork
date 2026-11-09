@@ -4,7 +4,7 @@ Transcend Beyond the Clock.
 
 Clockwork is a lightweight, self-hosted automation and task scheduling platform for developers. Define an automation once, schedule it, and let Clockwork run it reliably, whether the task belongs to Clockwork itself or to an external application.
 
-> **Status: Milestone 2 (Scheduling).** You can create, edit, pause and delete tasks with cron schedules through the UI and API. The scheduler queues an execution each time a task is due, and **Run now** queues one on demand. Queued executions are **not run yet**: runners arrive in M3. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
+> **Status: Milestone 3 (Execution).** Create HTTP and shell tasks with cron schedules through the UI and API. Clockwork runs them on schedule or on demand (**Run now**), applies each task's timeout, retries retryable failures with backoff, and records every attempt with its status, duration and an output excerpt. Recovery after a crash and the concurrency policy arrive in M4. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
 
 ## Quick start (Docker Compose)
 
@@ -33,7 +33,9 @@ All configuration comes from environment variables. The server refuses to start 
 | `CLOCKWORK_WEB_DIR` | empty | Directory with the built UI. Set in the Docker image. |
 | `CLOCKWORK_LOG_FORMAT` | `json` | `json` or `text`. |
 | `CLOCKWORK_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
-| `CLOCKWORK_SHUTDOWN_TIMEOUT` | `30s` | Grace period for in-flight requests on SIGTERM. |
+| `CLOCKWORK_SHUTDOWN_TIMEOUT` | `30s` | On SIGTERM, how long in-flight HTTP requests and running executions may continue. Executions still running after it are recorded as `interrupted`. |
+| `CLOCKWORK_WORKERS` | `4` | How many executions may run at once (1 to 256). |
+| `CLOCKWORK_HTTP_DENY_PRIVATE` | `false` | Refuse HTTP tasks whose target resolves to a loopback, link-local or private address. See [Security](#security). |
 | `CLOCKWORK_SCHEDULER_INTERVAL` | `1s` | How often the scheduler looks for due tasks (100ms to 1m). |
 | `CLOCKWORK_MISFIRE_GRACE` | `1m` | How late a run can be queued and still count as on time (1s to 24h). Later runs are misfires and follow the task's `misfire_policy`. |
 
@@ -91,9 +93,22 @@ Secret-looking headers, query parameters and environment variables (`Authorizati
   - A job pinned to a specific hour runs once on the day clocks fall back.
   - Interval jobs such as `*/5` keep running through the repeated hour.
 - `misfire_policy` decides what happens to runs missed while Clockwork was down (more than `CLOCKWORK_MISFIRE_GRACE` late): `skip` (default) drops them, `run_once` queues a single catch-up run. Either way, the schedule then continues from now.
-- `concurrency_policy`: `forbid` (default) or `allow`. It takes effect when execution ships (M4).
+- `concurrency_policy`: `forbid` (default) or `allow`. It is stored but not enforced until M4: today, overlapping runs of a task can run at the same time.
 - Editing a task's name, runner or retry settings keeps its pending run. Changing the cron or timezone, or resuming a paused task, recomputes the next run from now. Runs missed while a task was paused are not owed.
 - Semantics are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#3-scheduling-and-execution-semantics).
+
+### Runs and retries
+
+Each attempt is one execution. Its `status` is `queued`, `running`, `succeeded`, `failed`, `retrying` (failed, next attempt queued) or `interrupted` (Clockwork shut down mid-run).
+
+| Runner | Succeeds when | Retried (up to `retry.max_attempts`) | Not retried | `output` |
+|---|---|---|---|---|
+| `http` | status is in `expected_status`, or any 2xx when it is empty | timeout, connection error, status 5xx, 429, 408 | any other unexpected status, blocked target | `status_code`, `content_type`, first 8 KiB of `body`, `body_bytes` |
+| `shell` | exit code 0 | timeout, non-zero exit | command could not start | `exit_code`, first 16 KiB of `stdout` and `stderr` |
+
+- The wait before attempt *n*+1 is `backoff_initial_seconds × 2^(n-1)`, capped at `backoff_max_seconds`. A failed attempt's `error.retry_at` says when the next one may start.
+- HTTP requests carry `X-Clockwork-Execution-Id` and `X-Clockwork-Attempt`, so receivers can recognise a re-delivery. Delivery is at-least-once: make endpoints idempotent.
+- Shell commands run with `sh -c` and see only the task's `env`, plus `PATH` and `CLOCKWORK_EXECUTION_ID`, `CLOCKWORK_TASK_ID` and `CLOCKWORK_ATTEMPT`. On timeout the whole process group is killed.
 
 ## Development
 
@@ -131,7 +146,8 @@ cd web && npm test && npm run build # UI unit tests, typecheck, production build
 
 - **Every API call requires the admin token.** Treat it like a root password. Compose binds the port to `127.0.0.1`. Put a TLS-terminating reverse proxy in front before exposing Clockwork to a network.
 - **Shell tasks run arbitrary commands** as the Clockwork process user, with access to anything that user can reach. They are disabled unless `CLOCKWORK_ENABLE_SHELL=true`. The Docker image runs as an unprivileged user (uid 10001). External applications (M5) will never be allowed to create shell tasks.
-- Secrets in task configuration are stored in plain text in Postgres, and masked in API responses and logs. Protect database access and backups accordingly.
+- **HTTP tasks can reach anything the server can reach**, including internal services and cloud metadata endpoints. Set `CLOCKWORK_HTTP_DENY_PRIVATE=true` to refuse loopback, link-local and private targets. The check runs on the resolved address at connect time, so DNS names pointing inward are refused too. Outbound proxies are not used.
+- Secrets in task configuration are stored in plain text in Postgres, and masked in API responses and logs. Response bodies and command output are stored as excerpts: don't have tasks print secrets.
 - Clockwork has not had a security review. Don't run it on an untrusted network or claim it is production-secure without one.
 
 ## Troubleshooting
@@ -144,6 +160,9 @@ cd web && npm test && npm run build # UI unit tests, typecheck, production build
 | UI keeps asking for the token | The token changed on the server. Sign in again with the new value. |
 | "shell tasks are disabled on this server" | Expected by default. Set `CLOCKWORK_ENABLE_SHELL=true` only if you accept the risk. |
 | Port 8080 already in use | Set `CLOCKWORK_PORT` in `.env`. |
+| Execution failed with `config: the shell runner is not enabled on this server` | The task was created while shell was enabled. Re-enable it, or change the task to an HTTP runner. |
+| Execution failed with `blocked: destination … is not a public address` | `CLOCKWORK_HTTP_DENY_PRIVATE` is on and the URL resolves to an internal address. |
+| Runs stay `queued` | Check the logs for `executor started` and for claim errors, and that the task's `run_after` has passed. |
 
 ## License
 

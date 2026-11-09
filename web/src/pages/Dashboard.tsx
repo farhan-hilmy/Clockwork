@@ -8,11 +8,28 @@ interface DashboardData {
   tasks: Task[];
   truncated: boolean;
   apps: Application[];
+  failures24h: number;
+  failuresTruncated: boolean;
 }
 
+const DAY_MS = 86_400_000;
+
 async function load(): Promise<DashboardData> {
-  const [page, apps] = await Promise.all([api.listTasks({ limit: 200 }), api.applications()]);
-  return { tasks: page.tasks, truncated: !!page.next_cursor, apps };
+  const [page, apps, failed] = await Promise.all([
+    api.listTasks({ limit: 200 }),
+    api.applications(),
+    api.listExecutions({ status: "failed", limit: 200 }),
+  ]);
+  const since = Date.now() - DAY_MS;
+  // Newest first, so every recent failure is in this page unless all 200 are recent.
+  const recent = failed.executions.filter((e) => new Date(e.finished_at ?? e.created_at).getTime() >= since);
+  return {
+    tasks: page.tasks,
+    truncated: !!page.next_cursor,
+    apps,
+    failures24h: recent.length,
+    failuresTruncated: recent.length === failed.executions.length && !!failed.next_cursor,
+  };
 }
 
 function Stat({ label, value, meta }: { label: string; value: string | number; meta: string }) {
@@ -47,7 +64,7 @@ export function Dashboard() {
 }
 
 function Body({ data }: { data: DashboardData }) {
-  const { tasks, apps, truncated } = data;
+  const { tasks, apps, truncated, failures24h, failuresTruncated } = data;
   const enabled = tasks.filter((t) => t.enabled);
   const scheduled = enabled.filter((t) => t.schedule);
   const paused = tasks.filter((t) => !t.enabled && t.schedule);
@@ -63,7 +80,13 @@ function Body({ data }: { data: DashboardData }) {
         <Stat label="Total tasks" value={`${tasks.length}${plus}`} meta={`${enabled.length} enabled · ${tasks.length - enabled.length} disabled`} />
         <Stat label="Active schedules" value={scheduled.length} meta={`${paused.length} paused`} />
         <Stat label="Applications" value={apps.length} meta={`${apps.filter((a) => a.task_count > 0).length} with tasks`} />
-        <Stat label="Executions · 24h" value="—" meta="recorded from M3 (runners)" />
+        <Link to="/executions?status=failed" className="contents">
+          <Stat
+            label="Failures · 24h"
+            value={`${failures24h}${failuresTruncated ? "+" : ""}`}
+            meta={failures24h === 0 ? "no failed runs" : "view failed runs →"}
+          />
+        </Link>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
