@@ -72,17 +72,23 @@ IDs are prefixed ULIDs (`tsk_…`, `exe_…`, `app_…`). They sort by creation 
 
 `run_all` replay is deliberately left out of the MVP.
 
-**Overlapping runs**, per task:
-- `forbid` (default): if a run of the task is still active, the new occurrence is recorded as skipped.
+**Overlapping runs**, per task, enforced when a worker claims an execution (so it covers scheduled runs, manual runs and retries):
+- `forbid` (default): if a run of the task is `running`, the claimed execution is recorded as `skipped`. Claims for a `forbid` task are serialised with a transaction-scoped advisory lock on the task ID, so two workers or instances cannot both start overlapping runs. An advisory lock rather than a row lock: a task delete cascades into execution rows the claimer already holds, and a task row lock would deadlock with it.
 - `allow`: runs overlap, up to the global worker limit.
+
+Tasks without a schedule have no place to set the policy and use `forbid`.
 
 **Execution.** A single dispatcher claims the oldest `queued` execution whose `run_after` has passed, using `FOR UPDATE SKIP LOCKED`, and hands it to a worker. At most `CLOCKWORK_WORKERS` executions run at once. The worker runs the task's runner under `timeout_seconds` and records `status`, `output`, `error`, `started_at`, `finished_at` and `duration_ms`. The update only applies while the row is still `running`, so a row that was reassigned in the meantime is left to its new owner. A panicking runner fails its execution rather than the pool.
 
 **Retries.** Runners return errors classified as retryable (timeouts, connection errors, HTTP 5xx/429/408, non-zero shell exits) or not (invalid config, unexpected other status, blocked target). After a retryable failure, if attempts remain, the attempt is marked `retrying` and the next attempt is inserted in the same transaction as a new `queued` execution with `attempt + 1`, the same trigger and `scheduled_for`, and `run_after = now + backoff`. The backoff is `backoff_initial_seconds × 2^(attempt-1)`, capped at `backoff_max_seconds`.
 
-**Crash recovery (M4).** A claimed execution carries a lease (`lease_expires_at`). In M3 it is set to the task timeout plus a minute and is not yet extended or recovered. In M4 the worker extends it while the task runs, and executions whose lease has expired are marked `interrupted` and go through the retry policy, on startup and periodically.
+**Leases and crash recovery.**
+- A claimed execution holds a 30-second lease (`lease_expires_at`). Its worker renews it every 10 seconds while the runner works, however long the task's timeout.
+- At startup and every 15 seconds, each instance sweeps `running` executions whose lease has expired (`FOR UPDATE SKIP LOCKED`, so instances do not collide). It marks them `interrupted` with `error.kind = "interrupted"` and applies the retry policy, as for a retryable failure.
+- A worker that stalls past its lease and then wakes up finds, at its next renewal, that the row is no longer `running`. It cancels its run and discards the result, so the work is not finished twice by two owners.
+- Recovery cannot undo side effects the interrupted attempt already caused. This is the at-least-once case described above.
 
-**Graceful shutdown.** On SIGTERM: the scheduler stops, the executor stops claiming, and in-flight runs may continue for `CLOCKWORK_SHUTDOWN_TIMEOUT`. Runs still going are then canceled (killing shell process groups) and recorded as `interrupted`, without retry. The database pool closes only after every run is recorded. M4 revisits whether interrupted runs are retried.
+**Graceful shutdown.** On SIGTERM: the scheduler stops, the executor stops claiming, and in-flight runs may continue for `CLOCKWORK_SHUTDOWN_TIMEOUT`. Runs still going are then canceled (killing shell process groups), recorded as `interrupted`, and retried if attempts remain. The database pool closes only after every run is recorded. If the process is killed before that, the leases expire and another instance, or the next start, recovers the runs.
 
 ## 4. APIs
 

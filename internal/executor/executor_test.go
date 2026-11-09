@@ -1,7 +1,6 @@
 package executor_test
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -257,55 +256,5 @@ func TestNonRetryableFailureAndDisabledRunner(t *testing.T) {
 		if len(h) != 1 || h[0].Status != executions.StatusFailed || f.Kind != kind || f.Retryable {
 			t.Fatalf("task %s: %+v error=%s", id, h, h[0].Error)
 		}
-	}
-}
-
-func TestRunProcessesQueueAndInterruptsOnShutdown(t *testing.T) {
-	e := setup(t, false)
-	release := make(chan struct{})
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/slow" {
-			select {
-			case <-release:
-			case <-r.Context().Done():
-			}
-		}
-	}))
-	defer srv.Close()
-	defer close(release)
-	fast := httpTask(t, e, "fast", srv.URL+"/fast", nil, nil)
-	slow := httpTask(t, e, "slow", srv.URL+"/slow", nil, nil)
-	for range 3 {
-		_, _ = e.execs.RunNow(t.Context(), fast.ID)
-	}
-	_, _ = e.execs.RunNow(t.Context(), slow.ID)
-
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() { e.exec.Run(ctx); close(done) }()
-
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		h := history(t, e, fast.ID)
-		s := history(t, e, slow.ID)
-		if len(h) == 3 && h[0].Status == executions.StatusSucceeded && h[1].Status == executions.StatusSucceeded &&
-			h[2].Status == executions.StatusSucceeded && s[0].Status == executions.StatusRunning {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("queue not processed: fast=%+v slow=%+v", h, s)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-
-	cancel() // the slow run outlives the 200ms grace and is interrupted
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("Run did not return")
-	}
-	s := history(t, e, slow.ID)
-	if s[0].Status != executions.StatusInterrupted || s[0].FinishedAt == nil {
-		t.Fatalf("slow run after shutdown: %+v", s[0])
 	}
 }

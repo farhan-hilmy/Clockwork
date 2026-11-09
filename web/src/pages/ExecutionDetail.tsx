@@ -48,7 +48,12 @@ export function ExecutionDetail({ e }: { e: Execution }) {
         <Fact label="Finished">{formatDateTime(e.finished_at)}</Fact>
       </dl>
 
-      {err && (
+      {err && e.status === "skipped" && (
+        <p role="note" className="rounded-md border border-line bg-raised px-3 py-2 text-fg-2">
+          {err.message}
+        </p>
+      )}
+      {err && e.status !== "skipped" && (
         <div role="note" className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2">
           <p className="font-medium text-danger">
             {err.kind}: {err.message}

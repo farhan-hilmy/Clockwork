@@ -4,7 +4,7 @@ Transcend Beyond the Clock.
 
 Clockwork is a lightweight, self-hosted automation and task scheduling platform for developers. Define an automation once, schedule it, and let Clockwork run it reliably, whether the task belongs to Clockwork itself or to an external application.
 
-> **Status: Milestone 3 (Execution).** Create HTTP and shell tasks with cron schedules through the UI and API. Clockwork runs them on schedule or on demand (**Run now**), applies each task's timeout, retries retryable failures with backoff, and records every attempt with its status, duration and an output excerpt. Recovery after a crash and the concurrency policy arrive in M4. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
+> **Status: Milestone 4 (Reliability).** Create HTTP and shell tasks with cron schedules through the UI and API. Clockwork runs them on schedule or on demand (**Run now**), applies each task's timeout, retries retryable failures with backoff, and records every attempt with its status, duration and an output excerpt. Runs held by a crashed worker are recovered and retried, overlapping runs follow the task's concurrency policy, and several instances can safely share one database. Per-application API keys arrive in M5. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
 
 ## Quick start (Docker Compose)
 
@@ -33,7 +33,7 @@ All configuration comes from environment variables. The server refuses to start 
 | `CLOCKWORK_WEB_DIR` | empty | Directory with the built UI. Set in the Docker image. |
 | `CLOCKWORK_LOG_FORMAT` | `json` | `json` or `text`. |
 | `CLOCKWORK_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
-| `CLOCKWORK_SHUTDOWN_TIMEOUT` | `30s` | On SIGTERM, how long in-flight HTTP requests and running executions may continue. Executions still running after it are recorded as `interrupted`. |
+| `CLOCKWORK_SHUTDOWN_TIMEOUT` | `30s` | On SIGTERM, how long in-flight HTTP requests and running executions may continue. Executions still running after it are recorded as `interrupted` and retried if attempts remain. |
 | `CLOCKWORK_WORKERS` | `4` | How many executions may run at once (1 to 256). |
 | `CLOCKWORK_HTTP_DENY_PRIVATE` | `false` | Refuse HTTP tasks whose target resolves to a loopback, link-local or private address. See [Security](#security). |
 | `CLOCKWORK_SCHEDULER_INTERVAL` | `1s` | How often the scheduler looks for due tasks (100ms to 1m). |
@@ -93,13 +93,20 @@ Secret-looking headers, query parameters and environment variables (`Authorizati
   - A job pinned to a specific hour runs once on the day clocks fall back.
   - Interval jobs such as `*/5` keep running through the repeated hour.
 - `misfire_policy` decides what happens to runs missed while Clockwork was down (more than `CLOCKWORK_MISFIRE_GRACE` late): `skip` (default) drops them, `run_once` queues a single catch-up run. Either way, the schedule then continues from now.
-- `concurrency_policy`: `forbid` (default) or `allow`. It is stored but not enforced until M4: today, overlapping runs of a task can run at the same time.
+- `concurrency_policy` decides what happens when a run is about to start while another run of the same task is still going: `forbid` (default) records it as `skipped`, `allow` runs both. This covers scheduled runs, **Run now** and retries alike. Tasks without a schedule always use `forbid`.
 - Editing a task's name, runner or retry settings keeps its pending run. Changing the cron or timezone, or resuming a paused task, recomputes the next run from now. Runs missed while a task was paused are not owed.
 - Semantics are described in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#3-scheduling-and-execution-semantics).
 
 ### Runs and retries
 
-Each attempt is one execution. Its `status` is `queued`, `running`, `succeeded`, `failed`, `retrying` (failed, next attempt queued) or `interrupted` (Clockwork shut down mid-run).
+Each attempt is one execution. Its `status` is one of:
+
+- `queued`, `running`, `succeeded` or `failed`.
+- `retrying`: failed, and the next attempt is queued.
+- `interrupted`: Clockwork shut down mid-run, or the worker running it crashed or stalled. It is retried like a retryable failure.
+- `skipped`: not run, because another run of the task was active and its `concurrency_policy` is `forbid`.
+
+Delivery is at-least-once. A run that was interrupted after its HTTP request or command already took effect will run again on retry.
 
 | Runner | Succeeds when | Retried (up to `retry.max_attempts`) | Not retried | `output` |
 |---|---|---|---|---|
@@ -142,6 +149,14 @@ CLOCKWORK_TEST_DATABASE_URL="postgres://postgres:dev@localhost:5432/clockwork_te
 cd web && npm test && npm run build # UI unit tests, typecheck, production build
 ```
 
+The race detector needs cgo. On a machine without a C toolchain, run the suite in a Linux container against the same Postgres:
+
+```sh
+docker run --rm -v "$PWD:/src:ro" -w /src -e GOFLAGS=-buildvcs=false \
+  -e CLOCKWORK_TEST_DATABASE_URL="postgres://postgres:dev@host.docker.internal:5432/clockwork_test?sslmode=disable" \
+  golang:1.26 go test -race -p 1 ./...
+```
+
 ## Security
 
 - **Every API call requires the admin token.** Treat it like a root password. Compose binds the port to `127.0.0.1`. Put a TLS-terminating reverse proxy in front before exposing Clockwork to a network.
@@ -163,6 +178,8 @@ cd web && npm test && npm run build # UI unit tests, typecheck, production build
 | Execution failed with `config: the shell runner is not enabled on this server` | The task was created while shell was enabled. Re-enable it, or change the task to an HTTP runner. |
 | Execution failed with `blocked: destination … is not a public address` | `CLOCKWORK_HTTP_DENY_PRIVATE` is on and the URL resolves to an internal address. |
 | Runs stay `queued` | Check the logs for `executor started` and for claim errors, and that the task's `run_after` has passed. |
+| Many runs are `skipped` | Runs of that task last longer than its schedule interval, and its `concurrency_policy` is `forbid`. Lengthen the interval, shorten the run, or set `allow`. |
+| A run shows `interrupted` with "lease expired" | The instance running it crashed, was killed, or stalled for over 30 seconds. It is retried if attempts remain. |
 
 ## License
 

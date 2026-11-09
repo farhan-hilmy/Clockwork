@@ -52,6 +52,13 @@ describe("ExecutionDetail", () => {
     expect(screen.getByText("(empty)")).toBeTruthy();
   });
 
+  it("explains a skipped run without presenting it as a failure", () => {
+    const message = "skipped: a previous run of this task is still active (concurrency_policy=forbid)";
+    render(<ExecutionDetail e={{ ...base, status: "skipped", error: { kind: "concurrency", message, retryable: false } }} />);
+    expect(screen.getByText(message)).toBeTruthy();
+    expect(screen.queryByText("Not retryable.")).toBeNull();
+  });
+
   it("says when nothing has been recorded yet", () => {
     render(<ExecutionDetail e={{ ...base, status: "queued", started_at: null, finished_at: null, duration_ms: null }} />);
     expect(screen.getByText("No output recorded yet.")).toBeTruthy();
