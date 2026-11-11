@@ -14,7 +14,11 @@ export function TokenGate() {
     setError("");
     const candidate = value.trim();
     try {
-      await api.verifyToken(candidate);
+      const meta = await api.verifyToken(candidate);
+      if (meta.principal?.type === "application") {
+        setError("That is an application API key. The web UI needs the admin token.");
+        return;
+      }
       setToken(candidate); // only store a token the server accepted
     } catch (err) {
       setError(err instanceof ApiError && err.status === 401 ? "That token was rejected." : (err as Error).message);

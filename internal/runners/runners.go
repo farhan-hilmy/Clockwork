@@ -17,6 +17,9 @@ type Request struct {
 	ExecutionID string
 	TaskID      string
 	Attempt     int
+	// DenyPrivate refuses non-public HTTP targets for this request, even when the
+	// runner allows them in general. Set for tasks owned by external applications.
+	DenyPrivate bool
 }
 
 // Runner runs one attempt. ctx carries the task timeout.

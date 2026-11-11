@@ -38,7 +38,7 @@ func (m *MemoryRepository) List(_ context.Context, p ListParams) ([]Execution, e
 	defer m.mu.Unlock()
 	var out []Execution
 	for _, e := range m.execs {
-		if (p.TaskID != "" && e.TaskID != p.TaskID) || (p.Status != "" && e.Status != p.Status) ||
+		if (p.ApplicationID != "" && e.ApplicationID != p.ApplicationID) || (p.TaskID != "" && e.TaskID != p.TaskID) || (p.Status != "" && e.Status != p.Status) ||
 			(p.Cursor != "" && e.ID >= p.Cursor) {
 			continue
 		}
@@ -51,14 +51,24 @@ func (m *MemoryRepository) List(_ context.Context, p ListParams) ([]Execution, e
 	return out, nil
 }
 
-func (m *MemoryRepository) Enqueue(ctx context.Context, e Execution) (Execution, error) {
+func (m *MemoryRepository) Enqueue(ctx context.Context, e Execution) (Execution, bool, error) {
 	t, err := m.lookup(ctx, e.TaskID)
 	if err != nil {
-		return Execution{}, err
+		return Execution{}, false, err
 	}
 	e.ApplicationID, e.TaskName = t.ApplicationID, t.Name
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if e.IdempotencyKey != nil {
+		for _, prev := range m.execs {
+			if prev.ApplicationID == e.ApplicationID && prev.IdempotencyKey != nil && *prev.IdempotencyKey == *e.IdempotencyKey {
+				if prev.TaskID != e.TaskID {
+					return Execution{}, false, ErrIdempotencyConflict
+				}
+				return prev, true, nil
+			}
+		}
+	}
 	m.execs[e.ID] = e
-	return e, nil
+	return e, false, nil
 }

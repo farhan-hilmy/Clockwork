@@ -45,7 +45,7 @@ func openTestDB(t *testing.T) *pgxpool.Pool {
 	if err := store.Migrate(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(t.Context(), `TRUNCATE executions, tasks`); err != nil {
+	if _, err := pool.Exec(t.Context(), `TRUNCATE executions, tasks; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
 		t.Fatal(err)
 	}
 	return pool
@@ -176,7 +176,7 @@ func TestRetryableFailureIsRetriedWithBackoff(t *testing.T) {
 	}))
 	defer srv.Close()
 	tk := httpTask(t, e, "flaky", srv.URL, nil, &tasks.RetryPolicy{MaxAttempts: 3, BackoffInitialSeconds: 10, BackoffMaxSeconds: 60})
-	if _, err := e.execs.RunNow(t.Context(), tk.ID); err != nil {
+	if _, _, err := e.execs.RunNow(t.Context(), tk.ID, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,7 +219,7 @@ func TestLastAttemptFailsWithoutRetry(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) }))
 	defer srv.Close()
 	tk := httpTask(t, e, "down", srv.URL, nil, &tasks.RetryPolicy{MaxAttempts: 2, BackoffInitialSeconds: 1, BackoffMaxSeconds: 1})
-	_, _ = e.execs.RunNow(t.Context(), tk.ID)
+	_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
 	runOnce(t, e)
 	e.clock.advance(time.Second)
 	runOnce(t, e)
@@ -245,7 +245,7 @@ func TestNonRetryableFailureAndDisabledRunner(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, id := range []string{notFound.ID, shell.ID} {
-		_, _ = e.execs.RunNow(t.Context(), id)
+		_, _, _ = e.execs.RunNow(t.Context(), id, "")
 	}
 	for runOnce(t, e) {
 	}

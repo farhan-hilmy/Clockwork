@@ -85,6 +85,8 @@ func run() error {
 		ShutdownGrace: cfg.ShutdownTimeout,
 		Runners:       run,
 		Logger:        logger,
+		// Applications' HTTP tasks may only reach public addresses unless the operator allows more.
+		AppsMayReachPrivate: cfg.AppHTTPAllowPrivate,
 	})
 	var background sync.WaitGroup
 	background.Go(func() { sched.Run(ctx) })
@@ -96,7 +98,7 @@ func run() error {
 		Handler: httpapi.NewRouter(httpapi.Deps{
 			Tasks:      taskSvc,
 			Executions: executions.NewService(executions.NewPostgresRepository(pool), nil),
-			Apps:       apps.NewPostgresRepository(pool),
+			Apps:       apps.NewService(apps.NewPostgresRepository(pool), nil),
 			DB:         pool,
 			AdminToken: cfg.AdminToken,
 			WebDir:     cfg.WebDir,

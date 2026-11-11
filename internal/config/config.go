@@ -32,6 +32,8 @@ type Config struct {
 	Workers int
 	// HTTPDenyPrivate makes HTTP tasks refuse loopback, link-local and private targets.
 	HTTPDenyPrivate bool
+	// AppHTTPAllowPrivate lets tasks owned by external applications reach private addresses.
+	AppHTTPAllowPrivate bool
 }
 
 // Load reads configuration using getenv (os.Getenv in production) and validates it.
@@ -93,6 +95,14 @@ func Load(getenv func(string) string) (Config, error) {
 	cfg.HTTPDenyPrivate, err = strconv.ParseBool(get("CLOCKWORK_HTTP_DENY_PRIVATE", "false"))
 	if err != nil {
 		errs = append(errs, fmt.Errorf("CLOCKWORK_HTTP_DENY_PRIVATE: %w", err))
+	}
+
+	cfg.AppHTTPAllowPrivate, err = strconv.ParseBool(get("CLOCKWORK_APP_HTTP_ALLOW_PRIVATE", "false"))
+	if err != nil {
+		errs = append(errs, fmt.Errorf("CLOCKWORK_APP_HTTP_ALLOW_PRIVATE: %w", err))
+	}
+	if cfg.HTTPDenyPrivate && cfg.AppHTTPAllowPrivate {
+		errs = append(errs, errors.New("CLOCKWORK_APP_HTTP_ALLOW_PRIVATE cannot be true while CLOCKWORK_HTTP_DENY_PRIVATE is true"))
 	}
 
 	return cfg, errors.Join(errs...)

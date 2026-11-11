@@ -17,12 +17,19 @@ type taskHandlers struct {
 	log *slog.Logger
 }
 
+// shellForbidden is returned when an application tries to use the shell runner.
+// Shell tasks run arbitrary commands on the Clockwork host, so only the operator may create them.
+var shellForbidden = &tasks.ValidationError{Fields: map[string]string{"runner.type": "applications cannot use the shell runner"}}
+
 func (h *taskHandlers) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	p := tasks.ListParams{
 		ApplicationID: q.Get("application_id"),
 		Query:         q.Get("q"),
 		Cursor:        q.Get("cursor"),
+	}
+	if app := principal(r).AppID(); app != "" {
+		p.ApplicationID = app // an application only ever lists its own tasks
 	}
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
@@ -53,6 +60,17 @@ func (h *taskHandlers) create(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
+	if p := principal(r); !p.Admin {
+		if in.ApplicationID != "" && in.ApplicationID != p.App.ID {
+			h.fail(w, r, &tasks.ValidationError{Fields: map[string]string{"application_id": "an application can only create tasks for itself; omit this field"}})
+			return
+		}
+		if in.Runner.Type == tasks.RunnerShell {
+			h.fail(w, r, shellForbidden)
+			return
+		}
+		in.ApplicationID = p.App.ID
+	}
 	t, err := h.svc.Create(r.Context(), in)
 	if err != nil {
 		h.fail(w, r, err)
@@ -62,13 +80,24 @@ func (h *taskHandlers) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, t)
 }
 
-func (h *taskHandlers) get(w http.ResponseWriter, r *http.Request) {
+// owned loads a task and checks the caller may see it. A task of another
+// application is reported as not found, so its existence does not leak.
+func (h *taskHandlers) owned(w http.ResponseWriter, r *http.Request) (tasks.Task, bool) {
 	t, err := h.svc.Get(r.Context(), chi.URLParam(r, "id"))
+	if err == nil && !principal(r).owns(t.ApplicationID) {
+		err = tasks.ErrNotFound
+	}
 	if err != nil {
 		h.fail(w, r, err)
-		return
+		return tasks.Task{}, false
 	}
-	writeJSON(w, http.StatusOK, t)
+	return t, true
+}
+
+func (h *taskHandlers) get(w http.ResponseWriter, r *http.Request) {
+	if t, ok := h.owned(w, r); ok {
+		writeJSON(w, http.StatusOK, t)
+	}
 }
 
 func (h *taskHandlers) update(w http.ResponseWriter, r *http.Request) {
@@ -76,7 +105,15 @@ func (h *taskHandlers) update(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &in) {
 		return
 	}
-	t, err := h.svc.Update(r.Context(), chi.URLParam(r, "id"), in)
+	t, ok := h.owned(w, r)
+	if !ok {
+		return
+	}
+	if !principal(r).Admin && in.Runner.Set && in.Runner.Value.Type == tasks.RunnerShell {
+		h.fail(w, r, shellForbidden)
+		return
+	}
+	t, err := h.svc.Update(r.Context(), t.ID, in)
 	if err != nil {
 		h.fail(w, r, err)
 		return
@@ -86,7 +123,11 @@ func (h *taskHandlers) update(w http.ResponseWriter, r *http.Request) {
 
 func (h *taskHandlers) setEnabled(enabled bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		t, err := h.svc.SetEnabled(r.Context(), chi.URLParam(r, "id"), enabled)
+		t, ok := h.owned(w, r)
+		if !ok {
+			return
+		}
+		t, err := h.svc.SetEnabled(r.Context(), t.ID, enabled)
 		if err != nil {
 			h.fail(w, r, err)
 			return
@@ -96,7 +137,11 @@ func (h *taskHandlers) setEnabled(enabled bool) http.HandlerFunc {
 }
 
 func (h *taskHandlers) delete(w http.ResponseWriter, r *http.Request) {
-	if err := h.svc.Delete(r.Context(), chi.URLParam(r, "id")); err != nil {
+	t, ok := h.owned(w, r)
+	if !ok {
+		return
+	}
+	if err := h.svc.Delete(r.Context(), t.ID); err != nil {
 		h.fail(w, r, err)
 		return
 	}

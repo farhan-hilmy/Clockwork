@@ -11,9 +11,12 @@ import (
 type Repository interface {
 	Get(ctx context.Context, id string) (Execution, error)
 	List(ctx context.Context, p ListParams) ([]Execution, error)
-	// Enqueue inserts a queued, unscheduled execution of taskID.
-	// It returns tasks.ErrNotFound when the task does not exist.
-	Enqueue(ctx context.Context, e Execution) (Execution, error)
+	// Enqueue inserts a queued, unscheduled execution of e.TaskID, filling in its
+	// application and task name. It returns tasks.ErrNotFound when the task does
+	// not exist. When e.IdempotencyKey was already used in the task's application,
+	// it inserts nothing and returns the earlier execution with replayed=true, or
+	// ErrIdempotencyConflict if that execution belongs to another task.
+	Enqueue(ctx context.Context, e Execution) (exe Execution, replayed bool, err error)
 }
 
 // Service reads execution history and enqueues manual runs.
@@ -62,9 +65,12 @@ func (s *Service) List(ctx context.Context, p ListParams) (Page, error) {
 
 // RunNow queues an immediate run of a task, whether or not it is enabled or scheduled.
 // A worker picks it up within a second or so.
-func (s *Service) RunNow(ctx context.Context, taskID string) (Execution, error) {
+//
+// idempotencyKey, if not empty, makes the call safe to retry: a repeat with the
+// same key returns the original execution (replayed=true) instead of queuing another.
+func (s *Service) RunNow(ctx context.Context, taskID, idempotencyKey string) (exe Execution, replayed bool, err error) {
 	now := s.now()
-	return s.repo.Enqueue(ctx, Execution{
+	e := Execution{
 		ID:        ids.New("exe"),
 		TaskID:    taskID,
 		Trigger:   TriggerManual,
@@ -72,5 +78,9 @@ func (s *Service) RunNow(ctx context.Context, taskID string) (Execution, error) 
 		Attempt:   1,
 		CreatedAt: now,
 		RunAfter:  now,
-	})
+	}
+	if idempotencyKey != "" {
+		e.IdempotencyKey = &idempotencyKey
+	}
+	return s.repo.Enqueue(ctx, e)
 }

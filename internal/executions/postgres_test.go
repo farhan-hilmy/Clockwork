@@ -26,7 +26,7 @@ func TestPostgresRunNowListGet(t *testing.T) {
 	if err := store.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -42,7 +42,7 @@ func TestPostgresRunNowListGet(t *testing.T) {
 	svc := executions.NewService(executions.NewPostgresRepository(pool), nil)
 	var runIDs []string
 	for range 3 {
-		e, err := svc.RunNow(ctx, tk.ID)
+		e, _, err := svc.RunNow(ctx, tk.ID, "")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +60,7 @@ func TestPostgresRunNowListGet(t *testing.T) {
 	if _, err := svc.Get(ctx, "exe_missing"); !errors.Is(err, executions.ErrNotFound) {
 		t.Fatalf("get missing: %v", err)
 	}
-	if _, err := svc.RunNow(ctx, "tsk_missing"); !errors.Is(err, tasks.ErrNotFound) {
+	if _, _, err := svc.RunNow(ctx, "tsk_missing", ""); !errors.Is(err, tasks.ErrNotFound) {
 		t.Fatalf("run missing task: %v", err)
 	}
 
@@ -74,5 +74,76 @@ func TestPostgresRunNowListGet(t *testing.T) {
 	}
 	if p, _ := svc.List(ctx, executions.ListParams{Status: executions.StatusSucceeded}); len(p.Executions) != 0 {
 		t.Fatalf("status filter: %+v", p)
+	}
+}
+
+func TestPostgresIdempotencyAndApplicationFilter(t *testing.T) {
+	url := os.Getenv("CLOCKWORK_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("CLOCKWORK_TEST_DATABASE_URL not set; skipping Postgres integration test")
+	}
+	ctx := context.Background()
+	pool, err := store.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := store.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks; DELETE FROM applications WHERE id <> 'app_clockwork';
+		INSERT INTO applications (id, name) VALUES ('app_a', 'a'), ('app_b', 'b')`); err != nil {
+		t.Fatal(err)
+	}
+	taskSvc := tasks.NewService(tasks.NewPostgresRepository(pool), tasks.Options{})
+	mk := func(app, name string) tasks.Task {
+		tk, err := taskSvc.Create(ctx, tasks.CreateInput{ApplicationID: app, Name: name,
+			Runner: tasks.Runner{Type: tasks.RunnerHTTP, Config: json.RawMessage(`{"url":"https://example.com"}`)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tk
+	}
+	a1, a2, b1 := mk("app_a", "one"), mk("app_a", "two"), mk("app_b", "one")
+	svc := executions.NewService(executions.NewPostgresRepository(pool), nil)
+
+	first, replayed, err := svc.RunNow(ctx, a1.ID, "order-42")
+	if err != nil || replayed || first.IdempotencyKey == nil || *first.IdempotencyKey != "order-42" {
+		t.Fatalf("first: %+v %v %v", first, replayed, err)
+	}
+	again, replayed, err := svc.RunNow(ctx, a1.ID, "order-42")
+	if err != nil || !replayed || again.ID != first.ID {
+		t.Fatalf("replay: %+v %v %v", again, replayed, err)
+	}
+	if _, _, err := svc.RunNow(ctx, a2.ID, "order-42"); !errors.Is(err, executions.ErrIdempotencyConflict) {
+		t.Fatalf("same key, other task: %v", err)
+	}
+	if _, replayed, err := svc.RunNow(ctx, b1.ID, "order-42"); err != nil || replayed {
+		t.Fatalf("same key, other application: %v %v", replayed, err)
+	}
+
+	// Concurrent requests with one key queue exactly one run.
+	results := make(chan string, 10)
+	for range 10 {
+		go func() {
+			e, _, err := svc.RunNow(ctx, a2.ID, "burst")
+			if err != nil {
+				results <- "error: " + err.Error()
+				return
+			}
+			results <- e.ID
+		}()
+	}
+	seen := map[string]bool{}
+	for range 10 {
+		seen[<-results] = true
+	}
+	if len(seen) != 1 {
+		t.Fatalf("concurrent requests produced %v", seen)
+	}
+
+	page, _ := svc.List(ctx, executions.ListParams{ApplicationID: "app_b"})
+	if len(page.Executions) != 1 || page.Executions[0].TaskID != b1.ID {
+		t.Fatalf("application filter: %+v", page.Executions)
 	}
 }

@@ -25,6 +25,13 @@ func NewMemoryRepository(appIDs ...string) *MemoryRepository {
 	return &MemoryRepository{tasks: map[string]Task{}, apps: apps}
 }
 
+// AddApplication makes an application known, as if it had been inserted later.
+func (m *MemoryRepository) AddApplication(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.apps[id] = true
+}
+
 func (m *MemoryRepository) nameTaken(t Task) bool {
 	for _, o := range m.tasks {
 		if o.ID != t.ID && o.ApplicationID == t.ApplicationID && o.Name == t.Name {

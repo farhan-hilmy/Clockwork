@@ -57,3 +57,15 @@ func TestLoadRejectsBadValues(t *testing.T) {
 		}
 	}
 }
+
+func TestAppPrivateAccessCannotContradictGlobalDeny(t *testing.T) {
+	base := map[string]string{"CLOCKWORK_DATABASE_URL": "postgres://x", "CLOCKWORK_ADMIN_TOKEN": "0123456789abcdef"}
+	base["CLOCKWORK_APP_HTTP_ALLOW_PRIVATE"] = "true"
+	if cfg, err := Load(env(base)); err != nil || !cfg.AppHTTPAllowPrivate {
+		t.Fatalf("allow alone: %+v %v", cfg, err)
+	}
+	base["CLOCKWORK_HTTP_DENY_PRIVATE"] = "true"
+	if _, err := Load(env(base)); err == nil || !strings.Contains(err.Error(), "cannot be true while") {
+		t.Fatalf("contradiction accepted: %v", err)
+	}
+}

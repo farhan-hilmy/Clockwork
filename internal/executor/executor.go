@@ -51,6 +51,11 @@ type Options struct {
 	// Runners maps runner types to implementations. A missing type fails the
 	// execution without retry (for example shell tasks when shell is disabled).
 	Runners map[tasks.RunnerType]runners.Runner
+	// AppsMayReachPrivate lets HTTP tasks owned by external applications reach
+	// loopback, link-local and private addresses. Off by default: an application
+	// can read its executions' output, so reaching internal services would let an
+	// API key holder read them.
+	AppsMayReachPrivate bool
 	// Now is an injectable clock for tests. Defaults to time.Now.
 	Now    func() time.Time
 	Logger *slog.Logger
@@ -65,6 +70,7 @@ type Pool struct {
 	lease    time.Duration
 	recovery time.Duration
 	runners  map[tasks.RunnerType]runners.Runner
+	appsPriv bool
 	now      func() time.Time
 	log      *slog.Logger
 }
@@ -72,7 +78,7 @@ type Pool struct {
 // New builds a Pool.
 func New(db *pgxpool.Pool, o Options) *Pool {
 	p := &Pool{db: db, workers: o.Workers, poll: o.PollInterval, grace: o.ShutdownGrace,
-		lease: o.Lease, recovery: o.RecoveryInterval, runners: o.Runners, now: o.Now, log: o.Logger}
+		lease: o.Lease, recovery: o.RecoveryInterval, runners: o.Runners, appsPriv: o.AppsMayReachPrivate, now: o.Now, log: o.Logger}
 	if p.workers <= 0 {
 		p.workers = 4
 	}
@@ -374,7 +380,10 @@ func (p *Pool) run(ctx context.Context, e claimed) (out json.RawMessage, err err
 	}()
 	tctx, cancel := context.WithTimeout(ctx, e.timeout)
 	defer cancel()
-	return r.Run(tctx, runners.Request{Config: e.config, ExecutionID: e.id, TaskID: e.taskID, Attempt: e.number})
+	return r.Run(tctx, runners.Request{
+		Config: e.config, ExecutionID: e.id, TaskID: e.taskID, Attempt: e.number,
+		DenyPrivate: e.appID != tasks.DefaultApplicationID && !p.appsPriv,
+	})
 }
 
 // retryAt returns when the next attempt may start, or nil when there is none.

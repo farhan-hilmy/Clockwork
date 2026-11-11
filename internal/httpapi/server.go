@@ -4,12 +4,10 @@ package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -29,7 +27,7 @@ type Pinger interface {
 type Deps struct {
 	Tasks      *tasks.Service
 	Executions *executions.Service
-	Apps       apps.Lister
+	Apps       *apps.Service
 	DB         Pinger
 	AdminToken string
 	WebDir     string // directory with the built UI; empty disables UI serving
@@ -64,33 +62,50 @@ func NewRouter(d Deps) http.Handler {
 
 	h := &taskHandlers{svc: d.Tasks, log: d.Logger}
 	eh := &executionHandlers{svc: d.Executions, tasks: h}
+	ah := &applicationHandlers{svc: d.Apps, tasks: h}
 	r.Route("/api/v1", func(api chi.Router) {
-		api.Use(bearerAuth(d.AdminToken))
-		api.Get("/meta", func(w http.ResponseWriter, _ *http.Request) {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"version":       d.Version,
-				"shell_enabled": d.Tasks.ShellEnabled(),
-				"runners":       runnersAvailable(d.Tasks.ShellEnabled()),
+		// The API description is public: it holds no data, and tools fetch it without credentials.
+		api.Get("/openapi.json", serveOpenAPI)
+
+		api.Group(func(api chi.Router) {
+			api.Use(authenticate(d.AdminToken, d.Apps, d.Logger))
+			api.Get("/meta", func(w http.ResponseWriter, req *http.Request) {
+				p := principal(req)
+				shell := d.Tasks.ShellEnabled() && p.Admin // applications can never use shell
+				who := map[string]any{"type": "admin"}
+				if !p.Admin {
+					who = map[string]any{"type": "application", "application_id": p.App.ID, "application_name": p.App.Name}
+				}
+				writeJSON(w, http.StatusOK, map[string]any{
+					"version":       d.Version,
+					"shell_enabled": shell,
+					"runners":       runnersAvailable(shell),
+					"principal":     who,
+				})
+			})
+			api.Get("/tasks", h.list)
+			api.Post("/tasks", h.create)
+			api.Get("/tasks/{id}", h.get)
+			api.Patch("/tasks/{id}", h.update)
+			api.Delete("/tasks/{id}", h.delete)
+			api.Post("/tasks/{id}/enable", h.setEnabled(true))
+			api.Post("/tasks/{id}/disable", h.setEnabled(false))
+			api.Post("/tasks/{id}/run", eh.run)
+			api.Get("/executions", eh.list)
+			api.Get("/executions/{id}", eh.get)
+
+			api.Group(func(api chi.Router) {
+				api.Use(adminOnly)
+				api.Get("/applications", ah.list)
+				api.Post("/applications", ah.create)
+				api.Get("/applications/{id}", ah.get)
+				api.Patch("/applications/{id}", ah.update)
+				api.Delete("/applications/{id}", ah.delete)
+				api.Get("/applications/{id}/keys", ah.listKeys)
+				api.Post("/applications/{id}/keys", ah.createKey)
+				api.Delete("/applications/{id}/keys/{keyID}", ah.revokeKey)
 			})
 		})
-		api.Get("/applications", func(w http.ResponseWriter, req *http.Request) {
-			list, err := d.Apps.List(req.Context())
-			if err != nil {
-				h.internal(w, req, err)
-				return
-			}
-			writeJSON(w, http.StatusOK, map[string]any{"applications": list})
-		})
-		api.Get("/tasks", h.list)
-		api.Post("/tasks", h.create)
-		api.Get("/tasks/{id}", h.get)
-		api.Patch("/tasks/{id}", h.update)
-		api.Delete("/tasks/{id}", h.delete)
-		api.Post("/tasks/{id}/enable", h.setEnabled(true))
-		api.Post("/tasks/{id}/disable", h.setEnabled(false))
-		api.Post("/tasks/{id}/run", eh.run)
-		api.Get("/executions", eh.list)
-		api.Get("/executions/{id}", eh.get)
 		api.NotFound(func(w http.ResponseWriter, _ *http.Request) {
 			writeError(w, http.StatusNotFound, "not_found", "no such endpoint", nil)
 		})
@@ -110,22 +125,6 @@ func runnersAvailable(shell bool) []string {
 		return []string{"http", "shell"}
 	}
 	return []string{"http"}
-}
-
-// bearerAuth protects the API with a static admin token, compared in constant time.
-func bearerAuth(token string) func(http.Handler) http.Handler {
-	want := []byte(token)
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			got, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if !ok || subtle.ConstantTimeCompare([]byte(got), want) != 1 {
-				w.Header().Set("WWW-Authenticate", `Bearer realm="clockwork"`)
-				writeError(w, http.StatusUnauthorized, "unauthorized", "a valid bearer token is required", nil)
-				return
-			}
-			next.ServeHTTP(w, r)
-		})
-	}
 }
 
 func securityHeaders(next http.Handler) http.Handler {

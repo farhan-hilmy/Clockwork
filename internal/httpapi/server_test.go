@@ -24,24 +24,35 @@ type fakePinger struct{ err error }
 
 func (f fakePinger) Ping(context.Context) error { return f.err }
 
-type fakeApps struct{}
-
-func (fakeApps) List(context.Context) ([]apps.Application, error) {
-	return []apps.Application{{ID: tasks.DefaultApplicationID, Name: "clockwork", Enabled: true}}, nil
+// testEnv is a router over in-memory repositories.
+type testEnv struct {
+	srv   *httptest.Server
+	tasks *tasks.MemoryRepository
+	apps  *apps.Service
 }
 
-func newTestServer(t *testing.T, db Pinger, webDir string) *httptest.Server {
+func newTestEnv(t *testing.T, db Pinger, webDir string, shell bool) testEnv {
 	t.Helper()
 	repo := tasks.NewMemoryRepository()
-	svc := tasks.NewService(repo, tasks.Options{})
+	svc := tasks.NewService(repo, tasks.Options{AllowShell: shell})
 	execs := executions.NewService(executions.NewMemoryRepository(repo.Get), nil)
+	appRepo := apps.NewMemoryRepository()
+	appRepo.TaskCount = func(id string) int {
+		ts, _ := repo.List(context.Background(), tasks.ListParams{ApplicationID: id})
+		return len(ts)
+	}
+	appSvc := apps.NewService(appRepo, nil)
 	h := NewRouter(Deps{
-		Tasks: svc, Executions: execs, Apps: fakeApps{}, DB: db, AdminToken: token, WebDir: webDir,
+		Tasks: svc, Executions: execs, Apps: appSvc, DB: db, AdminToken: token, WebDir: webDir,
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	srv := httptest.NewServer(h)
 	t.Cleanup(srv.Close)
-	return srv
+	return testEnv{srv: srv, tasks: repo, apps: appSvc}
+}
+
+func newTestServer(t *testing.T, db Pinger, webDir string) *httptest.Server {
+	return newTestEnv(t, db, webDir, false).srv
 }
 
 func call(t *testing.T, srv *httptest.Server, method, path, body string, auth bool) (int, map[string]any) {

@@ -1,20 +1,6 @@
 import { api, setToken, type Meta } from "../api";
 import { useAsync } from "../hooks";
-import { Button, Card, EmptyState, ErrorState, PageHeader, Spinner } from "../ui";
-
-export function Integrations() {
-  return (
-    <>
-      <PageHeader title="Integrations" subtitle="External applications that use Clockwork through the /v1 API." />
-      <Card>
-        <EmptyState
-          title="Application registration arrives in M5"
-          body="Until then, every task belongs to the default clockwork application. External apps will get their own API keys and isolated tasks."
-        />
-      </Card>
-    </>
-  );
-}
+import { Button, Card, ErrorState, PageHeader, Spinner } from "../ui";
 
 export function Settings() {
   const meta = useAsync<Meta>(() => api.meta(), []);

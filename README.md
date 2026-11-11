@@ -4,7 +4,7 @@ Transcend Beyond the Clock.
 
 Clockwork is a lightweight, self-hosted automation and task scheduling platform for developers. Define an automation once, schedule it, and let Clockwork run it reliably, whether the task belongs to Clockwork itself or to an external application.
 
-> **Status: Milestone 4 (Reliability).** Create HTTP and shell tasks with cron schedules through the UI and API. Clockwork runs them on schedule or on demand (**Run now**), applies each task's timeout, retries retryable failures with backoff, and records every attempt with its status, duration and an output excerpt. Runs held by a crashed worker are recovered and retried, overlapping runs follow the task's concurrency policy, and several instances can safely share one database. Per-application API keys arrive in M5. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
+> **Status: Milestone 5 (Integration).** Create HTTP and shell tasks with cron schedules through the UI and API. Clockwork runs them on schedule or on demand, retries failures with backoff, recovers runs from crashed workers, and records every attempt. Other services integrate as **applications**: each gets its own API keys and only sees its own tasks and executions. Webhooks arrive in M6. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
 
 ## Quick start (Docker Compose)
 
@@ -35,20 +35,25 @@ All configuration comes from environment variables. The server refuses to start 
 | `CLOCKWORK_LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`. |
 | `CLOCKWORK_SHUTDOWN_TIMEOUT` | `30s` | On SIGTERM, how long in-flight HTTP requests and running executions may continue. Executions still running after it are recorded as `interrupted` and retried if attempts remain. |
 | `CLOCKWORK_WORKERS` | `4` | How many executions may run at once (1 to 256). |
-| `CLOCKWORK_HTTP_DENY_PRIVATE` | `false` | Refuse HTTP tasks whose target resolves to a loopback, link-local or private address. See [Security](#security). |
+| `CLOCKWORK_HTTP_DENY_PRIVATE` | `false` | Refuse every HTTP task whose target resolves to a loopback, link-local or private address. See [Security](#security). |
+| `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE` | `false` | Let HTTP tasks owned by applications reach private addresses. Off by default: see [Security](#security). Cannot be combined with `CLOCKWORK_HTTP_DENY_PRIVATE=true`. |
 | `CLOCKWORK_SCHEDULER_INTERVAL` | `1s` | How often the scheduler looks for due tasks (100ms to 1m). |
 | `CLOCKWORK_MISFIRE_GRACE` | `1m` | How late a run can be queued and still count as on time (1s to 24h). Later runs are misfires and follow the task's `misfire_policy`. |
 
 ## API
 
-Every `/api/v1` request needs `Authorization: Bearer <CLOCKWORK_ADMIN_TOKEN>`.
+Every `/api/v1` request needs `Authorization: Bearer <token>`. The token is either:
+
+- **the admin token** (`CLOCKWORK_ADMIN_TOKEN`): full access, used by the web UI and operators;
+- **an application API key** (`cwk_…`): access to that application's own tasks and executions only.
+
+The full API is described by `GET /api/v1/openapi.json` (OpenAPI 3.1, no authentication needed).
 
 | Method and path | Purpose |
 |---|---|
 | `GET /healthz` | Liveness. No auth. |
 | `GET /readyz` | Readiness, including the database. No auth. |
-| `GET /api/v1/meta` | Server version and available runners. |
-| `GET /api/v1/applications` | Applications and their task counts. |
+| `GET /api/v1/meta` | Server version, available runners, and who the caller is (`principal`). |
 | `GET /api/v1/tasks?limit=&cursor=&q=&enabled=&application_id=` | List tasks, newest first. |
 | `POST /api/v1/tasks` | Create a task. |
 | `GET /api/v1/tasks/{id}` | Get one task. |
@@ -58,6 +63,10 @@ Every `/api/v1` request needs `Authorization: Bearer <CLOCKWORK_ADMIN_TOKEN>`.
 | `POST /api/v1/tasks/{id}/run` | Queue a run now (`202`), even if the task is paused or unscheduled. |
 | `GET /api/v1/executions?task_id=&status=&limit=&cursor=` | List executions, newest first. |
 | `GET /api/v1/executions/{id}` | Get one execution. |
+| `GET`, `POST /api/v1/applications` | List or register applications. Admin only. |
+| `GET`, `PATCH`, `DELETE /api/v1/applications/{id}` | Get, rename, describe, enable/disable or delete an application. Admin only. |
+| `GET`, `POST /api/v1/applications/{id}/keys` | List an application's API keys, or create one. Admin only. |
+| `DELETE /api/v1/applications/{id}/keys/{keyID}` | Revoke a key. Admin only. |
 
 Example:
 
@@ -83,6 +92,19 @@ Errors always use one shape. A `422` lists every invalid field at once:
 ```
 
 Secret-looking headers, query parameters and environment variables (`Authorization`, `Cookie`, `*token*`, `*secret*`, `*password*`, `*key*` and similar) are returned as `********`. To keep a stored secret when you update a task, send `********` back unchanged.
+
+### Integrating an application
+
+1. Register the application and create a key, in the UI under **Integrations** or with the admin token (`POST /api/v1/applications`, then `POST /api/v1/applications/{id}/keys`). The key is shown once. Clockwork stores only its SHA-256 hash.
+2. The application calls the API with `Authorization: Bearer cwk_…`. Its tasks always belong to it, so it omits `application_id`.
+3. What an application can and cannot do:
+   - It sees only its own tasks and executions. Anything else answers `404`, as if it did not exist.
+   - It cannot use the shell runner, or call the `/applications` endpoints (`403`).
+   - Its HTTP tasks may only reach public addresses, unless `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true`.
+4. To retry `POST /tasks/{id}/run` safely after a timeout, send an `Idempotency-Key` header (up to 255 printable ASCII characters, unique per application). A repeat returns the original execution with `200` and `Idempotent-Replayed: true`. The same key on a different task answers `409`. Task names are unique per application, so a retried create answers `409` rather than creating a duplicate.
+5. To rotate a key: create a new one, deploy it, then revoke the old one. Disabling an application refuses its keys (`403 application_disabled`) and stops scheduling its tasks until it is re-enabled.
+
+[examples/integration](examples/integration) is a small client that follows these patterns.
 
 ### Schedules
 
@@ -159,9 +181,12 @@ docker run --rm -v "$PWD:/src:ro" -w /src -e GOFLAGS=-buildvcs=false \
 
 ## Security
 
-- **Every API call requires the admin token.** Treat it like a root password. Compose binds the port to `127.0.0.1`. Put a TLS-terminating reverse proxy in front before exposing Clockwork to a network.
-- **Shell tasks run arbitrary commands** as the Clockwork process user, with access to anything that user can reach. They are disabled unless `CLOCKWORK_ENABLE_SHELL=true`. The Docker image runs as an unprivileged user (uid 10001). External applications (M5) will never be allowed to create shell tasks.
-- **HTTP tasks can reach anything the server can reach**, including internal services and cloud metadata endpoints. Set `CLOCKWORK_HTTP_DENY_PRIVATE=true` to refuse loopback, link-local and private targets. The check runs on the resolved address at connect time, so DNS names pointing inward are refused too. Outbound proxies are not used.
+- **Every API call requires a token.** The admin token has full access: treat it like a root password. Application API keys only reach their own application, and are stored as SHA-256 hashes. Compose binds the port to `127.0.0.1`. Put a TLS-terminating reverse proxy in front before exposing Clockwork to a network.
+- **Shell tasks run arbitrary commands** as the Clockwork process user, with access to anything that user can reach. They are disabled unless `CLOCKWORK_ENABLE_SHELL=true`. The Docker image runs as an unprivileged user (uid 10001). Applications can never create shell tasks, whatever this setting.
+- **HTTP tasks can reach anything the server can reach**, including internal services and cloud metadata endpoints.
+  - **Application tasks** are refused loopback, link-local and private targets by default. An application can read its executions' output, so without this restriction an API key would be a way to read internal services. Set `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true` only if your applications are trusted to reach your internal network.
+  - **Operator tasks** may reach private targets, unless `CLOCKWORK_HTTP_DENY_PRIVATE=true`, which refuses them for every task.
+  - Both checks run on the resolved address at connect time, so DNS names pointing inward are refused too. Outbound proxies are not used.
 - Secrets in task configuration are stored in plain text in Postgres, and masked in API responses and logs. Response bodies and command output are stored as excerpts: don't have tasks print secrets.
 - Clockwork has not had a security review. Don't run it on an untrusted network or claim it is production-secure without one.
 
@@ -176,7 +201,9 @@ docker run --rm -v "$PWD:/src:ro" -w /src -e GOFLAGS=-buildvcs=false \
 | "shell tasks are disabled on this server" | Expected by default. Set `CLOCKWORK_ENABLE_SHELL=true` only if you accept the risk. |
 | Port 8080 already in use | Set `CLOCKWORK_PORT` in `.env`. |
 | Execution failed with `config: the shell runner is not enabled on this server` | The task was created while shell was enabled. Re-enable it, or change the task to an HTTP runner. |
-| Execution failed with `blocked: destination … is not a public address` | `CLOCKWORK_HTTP_DENY_PRIVATE` is on and the URL resolves to an internal address. |
+| Execution failed with `blocked: destination … is not a public address` | The URL resolves to an internal address. Tasks owned by applications need `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true` for that; with `CLOCKWORK_HTTP_DENY_PRIVATE=true` no task may. |
+| `403 application_disabled` | The application for that API key is disabled. Enable it under **Integrations**. |
+| The UI says "That is an application API key" | Sign in with the admin token. API keys are for applications calling the API. |
 | Runs stay `queued` | Check the logs for `executor started` and for claim errors, and that the task's `run_after` has passed. |
 | Many runs are `skipped` | Runs of that task last longer than its schedule interval, and its `concurrency_policy` is `forbid`. Lengthen the interval, shorten the run, or set `allow`. |
 | A run shows `interrupted` with "lease expired" | The instance running it crashed, was killed, or stalled for over 30 seconds. It is retried if attempts remain. |

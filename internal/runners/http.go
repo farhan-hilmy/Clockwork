@@ -34,15 +34,28 @@ type HTTPOptions struct {
 
 // HTTP sends the request configured on a task.
 type HTTP struct {
-	client    *http.Client
+	open      *http.Client // may reach any address (nil when DenyPrivate is set server-wide)
+	guarded   *http.Client // refuses non-public addresses
 	userAgent string
 }
 
 // NewHTTP builds the HTTP runner.
 func NewHTTP(o HTTPOptions) *HTTP {
+	ua := o.UserAgent
+	if ua == "" {
+		ua = "Clockwork"
+	}
+	h := &HTTP{userAgent: ua, guarded: newClient(true)}
+	if !o.DenyPrivate {
+		h.open = newClient(false)
+	}
+	return h
+}
+
+func newClient(denyPrivate bool) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	if o.DenyPrivate {
-		dialer.Control = denyPrivate
+	if denyPrivate {
+		dialer.Control = denyPrivateAddr
 	}
 	transport := &http.Transport{
 		Proxy:                 nil, // a proxy would bypass the private-address check
@@ -53,20 +66,13 @@ func NewHTTP(o HTTPOptions) *HTTP {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: time.Second,
 	}
-	ua := o.UserAgent
-	if ua == "" {
-		ua = "Clockwork"
-	}
-	return &HTTP{
-		userAgent: ua,
-		client: &http.Client{
-			Transport: transport,
-			CheckRedirect: func(_ *http.Request, via []*http.Request) error {
-				if len(via) >= 5 {
-					return errors.New("stopped after 5 redirects")
-				}
-				return nil
-			},
+	return &http.Client{
+		Transport: transport,
+		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if len(via) >= 5 {
+				return errors.New("stopped after 5 redirects")
+			}
+			return nil
 		},
 	}
 }
@@ -112,7 +118,11 @@ func (h *HTTP) Run(ctx context.Context, req Request) (json.RawMessage, error) {
 		hreq.Header.Set(k, v)
 	}
 
-	res, err := h.client.Do(hreq)
+	client := h.open
+	if client == nil || req.DenyPrivate {
+		client = h.guarded
+	}
+	res, err := client.Do(hreq)
 	if err != nil {
 		return nil, classifyTransport(ctx, err)
 	}
@@ -176,11 +186,11 @@ func unwrapURLError(err error) error {
 type blockedAddrError struct{ addr netip.Addr }
 
 func (e *blockedAddrError) Error() string {
-	return fmt.Sprintf("destination %s is not a public address (CLOCKWORK_HTTP_DENY_PRIVATE is on)", e.addr)
+	return fmt.Sprintf("destination %s is not a public address, and this task may only reach public addresses", e.addr)
 }
 
-// denyPrivate runs after DNS resolution, on the exact address being dialled.
-func denyPrivate(_, address string, _ syscall.RawConn) error {
+// denyPrivateAddr runs after DNS resolution, on the exact address being dialled.
+func denyPrivateAddr(_, address string, _ syscall.RawConn) error {
 	ap, err := netip.ParseAddrPort(address)
 	if err != nil {
 		return err

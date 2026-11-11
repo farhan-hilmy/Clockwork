@@ -47,7 +47,7 @@ These boundaries are enforced by direction of imports: `httpapi` → `tasks`/`ap
 | `applications` | Every task belongs to one. `app_clockwork` is the default context for tasks created in the UI. |
 | `tasks` | Definition: runner type + JSON config, optional schedule (cron, timezone, misfire and concurrency policy), timeout, retry policy, enabled flag, `next_run_at`. |
 | `executions` | One row per attempt: trigger, status, attempt number, input, output or error, timestamps, duration, optional idempotency key. |
-| `app_credentials` (M5) | Hashed API keys per application, supporting rotation and revocation. |
+| `app_credentials` | API keys per application: name, display prefix, SHA-256 hash of the key, `last_used_at` (written at most once a minute), `revoked_at`. Deleted with their application. |
 | `webhook_endpoints`, `webhook_deliveries` (M6) | Registered endpoints and per-event delivery attempts. |
 
 IDs are prefixed ULIDs (`tsk_…`, `exe_…`, `app_…`). They sort by creation time, which makes cursor pagination simple.
@@ -93,19 +93,25 @@ Tasks without a schedule have no place to set the policy and use `forbid`.
 ## 4. APIs
 
 - `/healthz` (liveness) and `/readyz` (database reachable).
-- `/api/v1/...`: one versioned JSON API used both by the web UI (admin token) and, from M5, by external applications (per-app API keys, scoped to their own tasks and executions).
+- `/api/v1/...`: one versioned JSON API, used both by the web UI (admin token) and by external applications (per-application API keys).
+- **Authentication** resolves every request to a principal: the admin, or one application. API keys are `cwk_` plus 256 random bits. They are looked up by SHA-256 hash, which is enough for keys of that entropy. A revoked key, or a key of a deleted application, answers 401. A key of a disabled application answers 403.
+- **Ownership** is enforced in the HTTP layer, the only place that knows the principal. An application's lists are filtered to its own `application_id`. Single resources owned by another application answer 404 rather than 403, so their existence does not leak. Creates are forced into the caller's application. The `/applications` endpoints are admin-only. The domain packages stay principal-agnostic.
+- **Restrictions for applications:** no shell runner, whatever `CLOCKWORK_ENABLE_SHELL` says. Their HTTP tasks may only reach public addresses unless `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true`. The executor decides this per execution, from the task's `application_id`.
+- **Idempotency:** `POST /tasks/{id}/run` accepts `Idempotency-Key`. The key is unique per application through `executions (application_id, idempotency_key)`. Concurrent requests with one key insert once; the others read that row and get `200 Idempotent-Replayed: true`. A key reused on another task answers 409. Retries the executor creates carry no key.
+- **Disabled applications:** their keys are refused and the scheduler skips their tasks. Due runs then wait, and when the application is re-enabled, each task's misfire policy applies.
 - Errors always use this envelope: `{"error": {"code": "validation_failed", "message": "...", "details": {...}}}`.
 - Lists use cursor pagination: `?limit=50&cursor=<last id>`, and responses include `next_cursor`.
-- OpenAPI document served at `/api/v1/openapi.json` (M5).
+- An OpenAPI 3.1 document is served without authentication at `/api/v1/openapi.json`. It is embedded in the binary, and a test checks it lists exactly the routed endpoints.
 
 ## 5. Security
 
 | Risk | Mitigation |
 |---|---|
-| Unauthenticated access | Every `/api/v1` route requires a bearer token. In M1 that is the admin token (`CLOCKWORK_ADMIN_TOKEN`), compared in constant time; the server refuses to start without one. |
+| Unauthenticated access | Every `/api/v1` route except `openapi.json` requires a bearer token: the admin token (`CLOCKWORK_ADMIN_TOKEN`, compared in constant time; the server refuses to start without one) or an application API key. |
+| One application reading or changing another's data | Ownership checks on every task and execution route; other applications' resources answer 404. Covered by `TestApplicationsCannotSeeEachOther`. |
 | Arbitrary command execution | Shell tasks are disabled unless `CLOCKWORK_ENABLE_SHELL=true`. External applications will never be allowed to create shell tasks. Runs get a timeout, a process-group kill, an output size cap, and only the environment variables set on the task. Running Clockwork as a non-root user in a container is strongly recommended. |
-| Credential leakage | Sensitive HTTP headers and shell environment variables are masked as `********` in every API response and log. Sending the mask back on update keeps the stored value. API keys are stored hashed (M5). |
-| SSRF via HTTP tasks | `CLOCKWORK_HTTP_DENY_PRIVATE=true` rejects loopback, link-local, private and other non-public targets, checked on the resolved address at connect time (so DNS rebinding is covered) with proxies disabled. In M3 it applies to every task; M5 may enforce it for app-owned tasks regardless of the flag. |
+| Credential leakage | Sensitive HTTP headers and shell environment variables are masked as `********` in every API response and log. Sending the mask back on update keeps the stored value. API keys are stored as SHA-256 hashes and shown only once, at creation. |
+| SSRF via HTTP tasks | `CLOCKWORK_HTTP_DENY_PRIVATE=true` rejects loopback, link-local, private and other non-public targets, checked on the resolved address at connect time (so DNS rebinding is covered) with proxies disabled. Tasks owned by applications get the same check by default, since an application can read its executions' output; `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true` lifts it. |
 | Oversized input | Request bodies are capped at 1 MiB, and runner configs and stored output excerpts are bounded. |
 | Webhook spoofing | Deliveries are HMAC-SHA256 signed with a per-endpoint secret and timestamp (M6). |
 

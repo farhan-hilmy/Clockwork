@@ -35,7 +35,7 @@ func openTestDB(t *testing.T) *pgxpool.Pool {
 	if err := store.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
 		t.Fatal(err)
 	}
 	return pool
@@ -275,5 +275,33 @@ func TestRunStopsWithContext(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after cancel")
+	}
+}
+
+// Tasks of a disabled application stay due and are not queued until it is re-enabled.
+func TestDisabledApplicationIsNotScheduled(t *testing.T) {
+	pool := openTestDB(t)
+	if _, err := pool.Exec(t.Context(), `INSERT INTO applications (id, name, enabled) VALUES ('app_off', 'off', false)`); err != nil {
+		t.Fatal(err)
+	}
+	c := newClock("2026-11-06T10:02:30Z")
+	svc := tasks.NewService(tasks.NewPostgresRepository(pool), tasks.Options{Now: c.now})
+	tk, err := svc.Create(t.Context(), tasks.CreateInput{ApplicationID: "app_off", Name: "x",
+		Runner:   tasks.Runner{Type: tasks.RunnerHTTP, Config: json.RawMessage(`{"url":"https://example.com"}`)},
+		Schedule: &tasks.Schedule{Cron: "*/5 * * * *"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newScheduler(pool, c)
+	c.set("2026-11-06T10:05:01Z")
+	if r, err := s.Tick(t.Context()); err != nil || r.Enqueued != 0 {
+		t.Fatalf("disabled app tick: %+v %v", r, err)
+	}
+	if got := nextRunAt(t, pool, tk.ID); got != "2026-11-06T10:05:00Z" {
+		t.Fatalf("next_run_at moved while disabled: %s", got)
+	}
+	_, _ = pool.Exec(t.Context(), `UPDATE applications SET enabled = true WHERE id = 'app_off'`)
+	if r, err := s.Tick(t.Context()); err != nil || r.Enqueued != 1 {
+		t.Fatalf("re-enabled app tick: %+v %v", r, err)
 	}
 }

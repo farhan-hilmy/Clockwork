@@ -24,13 +24,13 @@ func NewPostgresRepository(db *pgxpool.Pool) *PostgresRepository {
 }
 
 const selectExecution = `SELECT e.id, e.task_id, t.name, e.application_id, e.trigger, e.status, e.attempt,
-	e.scheduled_for, e.output, e.error, e.created_at, e.run_after, e.started_at, e.finished_at, e.duration_ms
+	e.scheduled_for, e.output, e.error, e.created_at, e.run_after, e.started_at, e.finished_at, e.duration_ms, e.idempotency_key
 	FROM executions e JOIN tasks t ON t.id = e.task_id`
 
 func scanExecution(row pgx.Row) (Execution, error) {
 	var e Execution
 	err := row.Scan(&e.ID, &e.TaskID, &e.TaskName, &e.ApplicationID, &e.Trigger, &e.Status, &e.Attempt,
-		&e.ScheduledFor, &e.Output, &e.Error, &e.CreatedAt, &e.RunAfter, &e.StartedAt, &e.FinishedAt, &e.DurationMS)
+		&e.ScheduledFor, &e.Output, &e.Error, &e.CreatedAt, &e.RunAfter, &e.StartedAt, &e.FinishedAt, &e.DurationMS, &e.IdempotencyKey)
 	if err != nil {
 		return Execution{}, err
 	}
@@ -61,6 +61,9 @@ func (r *PostgresRepository) List(ctx context.Context, p ListParams) ([]Executio
 	arg := func(v any) string {
 		args = append(args, v)
 		return fmt.Sprintf("$%d", len(args))
+	}
+	if p.ApplicationID != "" {
+		where = append(where, "e.application_id = "+arg(p.ApplicationID))
 	}
 	if p.TaskID != "" {
 		where = append(where, "e.task_id = "+arg(p.TaskID))
@@ -93,21 +96,42 @@ func (r *PostgresRepository) List(ctx context.Context, p ListParams) ([]Executio
 	return out, rows.Err()
 }
 
-func (r *PostgresRepository) Enqueue(ctx context.Context, e Execution) (Execution, error) {
-	// Copy the application from the task in the same statement, so a missing task inserts nothing.
-	err := r.db.QueryRow(ctx, `WITH t AS (SELECT id, application_id, name FROM tasks WHERE id = $2),
-		ins AS (
-			INSERT INTO executions (id, task_id, application_id, trigger, status, attempt, scheduled_for, created_at, run_after)
-			SELECT $1, t.id, t.application_id, $3, $4, $5, $6, $7, $7 FROM t
-			RETURNING application_id)
-		SELECT ins.application_id, t.name FROM ins, t`,
-		e.ID, e.TaskID, e.Trigger, e.Status, e.Attempt, e.ScheduledFor, e.CreatedAt,
-	).Scan(&e.ApplicationID, &e.TaskName)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Execution{}, tasks.ErrNotFound
-	}
+func (r *PostgresRepository) Enqueue(ctx context.Context, e Execution) (Execution, bool, error) {
+	replayed := false
+	err := pgx.BeginFunc(ctx, r.db, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT application_id, name FROM tasks WHERE id = $1`, e.TaskID).
+			Scan(&e.ApplicationID, &e.TaskName); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return tasks.ErrNotFound
+			}
+			return err
+		}
+		// A concurrent request with the same key waits here for ours to commit,
+		// then inserts nothing and reads ours below.
+		tag, err := tx.Exec(ctx, `INSERT INTO executions
+			(id, task_id, application_id, trigger, status, attempt, scheduled_for, created_at, run_after, idempotency_key)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)
+			ON CONFLICT (application_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`,
+			e.ID, e.TaskID, e.ApplicationID, e.Trigger, e.Status, e.Attempt, e.ScheduledFor, e.CreatedAt, e.IdempotencyKey)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 1 {
+			return nil
+		}
+		prev, err := scanExecution(tx.QueryRow(ctx, selectExecution+` WHERE e.application_id = $1 AND e.idempotency_key = $2`,
+			e.ApplicationID, e.IdempotencyKey))
+		if err != nil {
+			return err
+		}
+		if prev.TaskID != e.TaskID {
+			return ErrIdempotencyConflict
+		}
+		e, replayed = prev, true
+		return nil
+	})
 	if err != nil {
-		return Execution{}, err
+		return Execution{}, false, err
 	}
-	return e, nil
+	return e, replayed, nil
 }

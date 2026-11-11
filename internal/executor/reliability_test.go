@@ -118,7 +118,7 @@ func TestConcurrentWorkersRunEachExecutionOnce(t *testing.T) {
 	for i := range nTasks {
 		tk := httpTask(t, e, fmt.Sprintf("t%d", i), srv.URL, allowOverlap, nil)
 		for range perTask {
-			x, err := e.execs.RunNow(t.Context(), tk.ID)
+			x, _, err := e.execs.RunNow(t.Context(), tk.ID, "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -156,7 +156,7 @@ func TestForbidSkipsOverlappingRunsAcrossInstances(t *testing.T) {
 	srv := newSlowServer(t)
 	forbid := httpTask(t, e, "forbid", srv.URL+"/slow", nil, nil) // unscheduled tasks use forbid
 	for range 3 {
-		_, _ = e.execs.RunNow(t.Context(), forbid.ID)
+		_, _, _ = e.execs.RunNow(t.Context(), forbid.ID, "")
 	}
 
 	// Two instances race for three queued runs of the same task: one runs, two are skipped.
@@ -211,7 +211,7 @@ func TestAllowRunsOverlap(t *testing.T) {
 	srv := newSlowServer(t)
 	tk := httpTask(t, e, "allow", srv.URL+"/slow", allowOverlap, nil)
 	for range 3 {
-		_, _ = e.execs.RunNow(t.Context(), tk.ID)
+		_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
 	}
 	stop := start(t, realPool(e, executor.Options{Workers: 4}))
 	for range 3 {
@@ -239,7 +239,7 @@ func TestCrashedWorkerIsRecoveredAndRetried(t *testing.T) {
 
 	// A worker claims both executions, then the process dies: nothing renews the leases.
 	for _, id := range []string{retried.ID, final.ID} {
-		x, _ := e.execs.RunNow(t.Context(), id)
+		x, _, _ := e.execs.RunNow(t.Context(), id, "")
 		if _, err := e.pool.Exec(t.Context(), `UPDATE executions SET status = 'running', started_at = $2, lease_expires_at = $3 WHERE id = $1`,
 			x.ID, e.clock.now(), e.clock.now().Add(30*time.Second)); err != nil {
 			t.Fatal(err)
@@ -287,7 +287,7 @@ func TestLeaseIsRenewedWhileRunning(t *testing.T) {
 	e := setup(t, false)
 	srv := newSlowServer(t)
 	tk := httpTask(t, e, "long", srv.URL+"/slow", nil, nil)
-	_, _ = e.execs.RunNow(t.Context(), tk.ID)
+	_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
 
 	// The run lasts several lease periods; frequent recovery sweeps must not touch it.
 	stop := start(t, realPool(e, executor.Options{Lease: 300 * time.Millisecond, RecoveryInterval: 50 * time.Millisecond}))
@@ -305,7 +305,7 @@ func TestStalledWorkerLosesLeaseAndStops(t *testing.T) {
 	e := setup(t, false)
 	srv := newSlowServer(t)
 	tk := httpTask(t, e, "stalled", srv.URL+"/slow", nil, &tasks.RetryPolicy{MaxAttempts: 2, BackoffInitialSeconds: 1, BackoffMaxSeconds: 1})
-	_, _ = e.execs.RunNow(t.Context(), tk.ID)
+	_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
 
 	stop := start(t, realPool(e, executor.Options{Lease: 300 * time.Millisecond, RecoveryInterval: time.Hour}))
 	id := <-srv.started
@@ -336,7 +336,7 @@ func TestShutdownInterruptsAndRetries(t *testing.T) {
 	e := setup(t, false)
 	srv := newSlowServer(t)
 	tk := httpTask(t, e, "slow", srv.URL+"/slow", nil, &tasks.RetryPolicy{MaxAttempts: 2, BackoffInitialSeconds: 1, BackoffMaxSeconds: 1})
-	_, _ = e.execs.RunNow(t.Context(), tk.ID)
+	_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
 
 	stop := start(t, realPool(e, executor.Options{ShutdownGrace: 200 * time.Millisecond}))
 	<-srv.started
@@ -353,7 +353,7 @@ func TestShutdownWaitsForRunsWithinGrace(t *testing.T) {
 	e := setup(t, false)
 	srv := newSlowServer(t)
 	tk := httpTask(t, e, "quick-enough", srv.URL+"/slow", nil, nil)
-	_, _ = e.execs.RunNow(t.Context(), tk.ID)
+	_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
 
 	stop := start(t, realPool(e, executor.Options{ShutdownGrace: 10 * time.Second}))
 	<-srv.started
@@ -364,5 +364,47 @@ func TestShutdownWaitsForRunsWithinGrace(t *testing.T) {
 	stop()
 	if h := history(t, e, tk.ID); h[0].Status != executions.StatusSucceeded {
 		t.Fatalf("run in flight at shutdown: %v", statuses(h))
+	}
+}
+
+// Applications' HTTP tasks may not reach private addresses unless the operator allows it.
+func TestApplicationTasksCannotReachPrivateAddresses(t *testing.T) {
+	e := setup(t, false)
+	if _, err := e.pool.Exec(t.Context(), `INSERT INTO applications (id, name) VALUES ('app_ext', 'ext')`); err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer srv.Close()
+	own := httpTask(t, e, "operator", srv.URL, nil, nil)
+	ext, err := e.tasks.Create(t.Context(), tasks.CreateInput{ApplicationID: "app_ext", Name: "external",
+		Runner: tasks.Runner{Type: tasks.RunnerHTTP, Config: json.RawMessage(`{"url":"` + srv.URL + `"}`)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []string{own.ID, ext.ID} {
+		_, _, _ = e.execs.RunNow(t.Context(), id, "")
+	}
+	for runOnce(t, e) {
+	}
+	if h := history(t, e, own.ID); h[0].Status != executions.StatusSucceeded {
+		t.Fatalf("operator task to 127.0.0.1: %v", statuses(h))
+	}
+	h := history(t, e, ext.ID)
+	var f runners.Failure
+	_ = json.Unmarshal(h[0].Error, &f)
+	if h[0].Status != executions.StatusFailed || f.Kind != runners.KindBlocked {
+		t.Fatalf("application task to 127.0.0.1: %v %s", statuses(h), h[0].Error)
+	}
+
+	// With CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true the same task may run.
+	allowing := executor.New(e.pool, executor.Options{AppsMayReachPrivate: true, Now: e.clock.now, Logger: quiet(),
+		Runners: map[tasks.RunnerType]runners.Runner{tasks.RunnerHTTP: runners.NewHTTP(runners.HTTPOptions{})}})
+	_, _, _ = e.execs.RunNow(t.Context(), ext.ID, "")
+	if ran, err := allowing.RunOnce(t.Context()); !ran || err != nil {
+		t.Fatalf("run: %v %v", ran, err)
+	}
+	if h := history(t, e, ext.ID); h[1].Status != executions.StatusSucceeded {
+		t.Fatalf("allowed application task: %v", statuses(h))
 	}
 }

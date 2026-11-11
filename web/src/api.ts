@@ -63,12 +63,31 @@ export interface Application {
   enabled: boolean;
   task_count: number;
   created_at: string;
+  updated_at: string;
 }
+
+/** An application's API key. The key itself is only returned once, as NewApiKey.key. */
+export interface ApiKey {
+  id: string;
+  application_id: string;
+  name: string;
+  prefix: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}
+
+export interface NewApiKey extends ApiKey {
+  key: string;
+}
+
+export const DEFAULT_APP_ID = "app_clockwork";
 
 export interface Meta {
   version: string;
   shell_enabled: boolean;
   runners: RunnerType[];
+  principal: { type: "admin" } | { type: "application"; application_id: string; application_name: string };
 }
 
 export interface TaskPage {
@@ -202,6 +221,14 @@ export const api = {
   /** Checks a candidate token without storing it. */
   verifyToken: (token: string) => request<Meta>("GET", "/meta", undefined, token),
   applications: () => request<{ applications: Application[] }>("GET", "/applications").then((r) => r.applications),
+  createApplication: (input: { name: string; description: string }) => request<Application>("POST", "/applications", input),
+  updateApplication: (id: string, input: Partial<Pick<Application, "name" | "description" | "enabled">>) =>
+    request<Application>("PATCH", `/applications/${encodeURIComponent(id)}`, input),
+  deleteApplication: (id: string) => request<void>("DELETE", `/applications/${encodeURIComponent(id)}`),
+  listKeys: (appId: string) => request<{ keys: ApiKey[] }>("GET", `/applications/${encodeURIComponent(appId)}/keys`).then((r) => r.keys),
+  createKey: (appId: string, name: string) => request<NewApiKey>("POST", `/applications/${encodeURIComponent(appId)}/keys`, { name }),
+  revokeKey: (appId: string, keyId: string) =>
+    request<void>("DELETE", `/applications/${encodeURIComponent(appId)}/keys/${encodeURIComponent(keyId)}`),
   listTasks: (params: { q?: string; enabled?: boolean; application_id?: string; cursor?: string; limit?: number } = {}) =>
     request<TaskPage>("GET", `/tasks${query(params)}`),
   getTask: (id: string) => request<Task>("GET", `/tasks/${encodeURIComponent(id)}`),

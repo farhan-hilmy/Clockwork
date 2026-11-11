@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { api, ApiError, type HttpConfig, type Meta, type RunnerType, type ShellConfig, type Task, type TaskInput } from "../api";
+import { api, ApiError, DEFAULT_APP_ID, type HttpConfig, type Meta, type RunnerType, type ShellConfig, type Task, type TaskInput } from "../api";
 import { formatDateTime, localTimezone, relativeTime } from "../format";
 import { useAsync } from "../hooks";
 import { formatLines, parseLines, parseStatusList } from "../kv";
@@ -157,6 +157,9 @@ function Editor({ task, meta, isNew }: { task: Task | null; meta: Meta; isNew: b
   const [formError, setFormError] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState<Task | null>(task);
+  // Which application a new task belongs to. Existing tasks cannot move between applications.
+  const [appId, setAppId] = useState(DEFAULT_APP_ID);
+  const apps = useAsync(() => api.applications(), []);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [running, setRunning] = useState(false);
@@ -177,7 +180,7 @@ function Editor({ task, meta, isNew }: { task: Task | null; meta: Meta; isNew: b
     }
     setSaving(true);
     try {
-      const result = isNew ? await api.createTask(input) : await api.updateTask(saved!.id, input);
+      const result = isNew ? await api.createTask({ ...input, application_id: appId }) : await api.updateTask(saved!.id, input);
       setErrors({});
       if (isNew) {
         navigate(`/tasks/${result.id}`, { replace: true });
@@ -291,6 +294,23 @@ function Editor({ task, meta, isNew }: { task: Task | null; meta: Meta; isNew: b
       )}
 
       <Section title="Basics">
+        {isNew && apps.status === "ready" && apps.data.length > 1 && (
+          <Field label="Application" hint="The task belongs to this application, and its API keys can see and run it." error={err("application_id")}>
+            <select className={inputClass} value={appId} onChange={(e) => setAppId(e.target.value)}>
+              {apps.data.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                  {a.id === DEFAULT_APP_ID ? " (default)" : ""}
+                </option>
+              ))}
+            </select>
+          </Field>
+        )}
+        {!isNew && saved && saved.application_id !== DEFAULT_APP_ID && (
+          <p className="text-xs text-fg-3">
+            Belongs to application <span className="font-mono">{saved.application_id}</span>. Its HTTP requests may only reach public addresses unless the server allows more.
+          </p>
+        )}
         <Field label="Name" error={err("name")}>
           <input className={inputClass} value={f.name} onChange={(e) => set("name", e.target.value)} aria-invalid={!!err("name")} placeholder="health-check-api" />
         </Field>

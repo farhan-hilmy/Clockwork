@@ -55,14 +55,17 @@ type Execution struct {
 	StartedAt     *time.Time      `json:"started_at"`
 	FinishedAt    *time.Time      `json:"finished_at"`
 	DurationMS    *int64          `json:"duration_ms"`
+	// IdempotencyKey is the client's Idempotency-Key for a manual run, if it sent one.
+	IdempotencyKey *string `json:"idempotency_key,omitempty"`
 }
 
 // ListParams filters and paginates executions. Results are newest first.
 type ListParams struct {
-	TaskID string
-	Status string
-	Limit  int
-	Cursor string // return executions with id < Cursor
+	ApplicationID string // restrict to one application's executions
+	TaskID        string
+	Status        string
+	Limit         int
+	Cursor        string // return executions with id < Cursor
 }
 
 // Page is one page of executions.
@@ -71,5 +74,12 @@ type Page struct {
 	NextCursor string      `json:"next_cursor,omitempty"`
 }
 
-// ErrNotFound is returned when an execution does not exist.
-var ErrNotFound = errors.New("execution not found")
+// Errors returned by the service.
+var (
+	ErrNotFound = errors.New("execution not found")
+	// ErrIdempotencyConflict means the Idempotency-Key was already used for a different task.
+	ErrIdempotencyConflict = errors.New("this Idempotency-Key was already used to run a different task")
+)
+
+// MaxIdempotencyKeyLen bounds the Idempotency-Key header.
+const MaxIdempotencyKeyLen = 255

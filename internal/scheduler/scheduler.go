@@ -113,12 +113,14 @@ func (s *Scheduler) tickBatch(ctx context.Context, now time.Time) (Result, error
 	err := pgx.BeginFunc(ctx, s.db, func(tx pgx.Tx) error {
 		// SKIP LOCKED lets several instances share the work without blocking each other,
 		// and keeps a task being edited from stalling the whole pass.
-		rows, err := tx.Query(ctx, `SELECT id, coalesce(schedule_cron, ''), schedule_timezone, misfire_policy, next_run_at
-			FROM tasks
-			WHERE enabled AND next_run_at IS NOT NULL AND next_run_at <= $1
-			ORDER BY next_run_at
+		// Tasks of a disabled application are left due; when it is re-enabled,
+		// their misfire policy decides what happens to the runs missed meanwhile.
+		rows, err := tx.Query(ctx, `SELECT t.id, coalesce(t.schedule_cron, ''), t.schedule_timezone, t.misfire_policy, t.next_run_at
+			FROM tasks t JOIN applications a ON a.id = t.application_id
+			WHERE t.enabled AND a.enabled AND t.next_run_at IS NOT NULL AND t.next_run_at <= $1
+			ORDER BY t.next_run_at
 			LIMIT $2
-			FOR UPDATE SKIP LOCKED`, now, s.batch)
+			FOR UPDATE OF t SKIP LOCKED`, now, s.batch)
 		if err != nil {
 			return fmt.Errorf("select due tasks: %w", err)
 		}
