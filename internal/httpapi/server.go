@@ -16,6 +16,7 @@ import (
 	"github.com/farhan-hilmy/clockwork/internal/apps"
 	"github.com/farhan-hilmy/clockwork/internal/executions"
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
+	"github.com/farhan-hilmy/clockwork/internal/webhooks"
 )
 
 // Pinger checks a dependency for the readiness probe.
@@ -27,6 +28,7 @@ type Pinger interface {
 type Deps struct {
 	Tasks      *tasks.Service
 	Executions *executions.Service
+	Webhooks   *webhooks.Service
 	Apps       *apps.Service
 	DB         Pinger
 	AdminToken string
@@ -63,6 +65,7 @@ func NewRouter(d Deps) http.Handler {
 	h := &taskHandlers{svc: d.Tasks, log: d.Logger}
 	eh := &executionHandlers{svc: d.Executions, tasks: h}
 	ah := &applicationHandlers{svc: d.Apps, tasks: h}
+	wh := &webhookHandlers{svc: d.Webhooks, tasks: h}
 	r.Route("/api/v1", func(api chi.Router) {
 		// The API description is public: it holds no data, and tools fetch it without credentials.
 		api.Get("/openapi.json", serveOpenAPI)
@@ -93,6 +96,16 @@ func NewRouter(d Deps) http.Handler {
 			api.Post("/tasks/{id}/run", eh.run)
 			api.Get("/executions", eh.list)
 			api.Get("/executions/{id}", eh.get)
+			api.Get("/webhooks", wh.list)
+			api.Post("/webhooks", wh.create)
+			api.Get("/webhooks/{id}", wh.get)
+			api.Patch("/webhooks/{id}", wh.update)
+			api.Delete("/webhooks/{id}", wh.delete)
+			api.Post("/webhooks/{id}/rotate-secret", wh.rotateSecret)
+			api.Post("/webhooks/{id}/test", wh.test)
+			api.Get("/webhooks/{id}/deliveries", wh.deliveries)
+			api.Get("/webhooks/{id}/deliveries/{deliveryID}", wh.delivery)
+			api.Post("/webhooks/{id}/deliveries/{deliveryID}/redeliver", wh.redeliver)
 
 			api.Group(func(api chi.Router) {
 				api.Use(adminOnly)

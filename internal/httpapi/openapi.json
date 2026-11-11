@@ -3,311 +3,1412 @@
   "info": {
     "title": "Clockwork API",
     "version": "1",
-    "description": "Self-hosted automation and task scheduling. Authenticate with `Authorization: Bearer <token>`, where the token is either the operator's admin token or an application's API key (`cwk_...`). An application only sees its own tasks and executions; anything else answers 404. Applications cannot use the shell runner. Errors always use the `Error` shape."
+    "description": "Self-hosted automation and task scheduling. Authenticate with `Authorization: Bearer <token>`, where the token is either the operator's admin token or an application's API key (`cwk_...`). An application only sees its own tasks and executions; anything else answers 404. Applications cannot use the shell runner. Errors always use the `Error` shape. Webhook deliveries are signed: verify the Clockwork-Signature header (see the WebhookEvent schema)."
   },
-  "servers": [{ "url": "/api/v1" }],
-  "security": [{ "bearer": [] }],
+  "servers": [
+    {
+      "url": "/api/v1"
+    }
+  ],
+  "security": [
+    {
+      "bearer": []
+    }
+  ],
   "tags": [
-    { "name": "meta" },
-    { "name": "tasks" },
-    { "name": "executions" },
-    { "name": "applications", "description": "Admin token only." }
+    {
+      "name": "meta"
+    },
+    {
+      "name": "tasks"
+    },
+    {
+      "name": "executions"
+    },
+    {
+      "name": "applications",
+      "description": "Admin token only."
+    },
+    {
+      "name": "webhooks",
+      "description": "Signed event notifications. An application manages its own endpoints; the admin manages anyone's."
+    }
   ],
   "paths": {
     "/openapi.json": {
       "get": {
-        "tags": ["meta"],
+        "tags": [
+          "meta"
+        ],
         "summary": "This document",
         "security": [],
-        "responses": { "200": { "description": "OpenAPI 3.1 document", "content": { "application/json": {} } } }
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document",
+            "content": {
+              "application/json": {}
+            }
+          }
+        }
       }
     },
     "/meta": {
       "get": {
-        "tags": ["meta"],
+        "tags": [
+          "meta"
+        ],
         "summary": "Server version, available runners and who the caller is",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Meta" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Meta"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
         }
       }
     },
     "/tasks": {
       "get": {
-        "tags": ["tasks"],
+        "tags": [
+          "tasks"
+        ],
         "summary": "List tasks, newest first",
         "description": "For an application, only its own tasks; `application_id` is ignored.",
         "parameters": [
-          { "$ref": "#/components/parameters/Limit" },
-          { "$ref": "#/components/parameters/Cursor" },
-          { "name": "q", "in": "query", "description": "Case-insensitive substring of the task name", "schema": { "type": "string" } },
-          { "name": "enabled", "in": "query", "schema": { "type": "boolean" } },
-          { "name": "application_id", "in": "query", "description": "Admin only: filter by application", "schema": { "type": "string" } }
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Case-insensitive substring of the task name",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "enabled",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "application_id",
+            "in": "query",
+            "description": "Admin only: filter by application",
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskPage" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
         }
       },
       "post": {
-        "tags": ["tasks"],
+        "tags": [
+          "tasks"
+        ],
         "summary": "Create a task",
         "description": "An application's tasks always belong to it: omit `application_id`. Task names are unique per application, so a create retried after a timeout answers 409 instead of creating a duplicate.",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskCreate" } } } },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskCreate"
+              }
+            }
+          }
+        },
         "responses": {
-          "201": { "description": "Created", "headers": { "Location": { "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/ValidationFailed" }
+          "201": {
+            "description": "Created",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
         }
       }
     },
     "/tasks/{id}": {
-      "parameters": [{ "$ref": "#/components/parameters/TaskID" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TaskID"
+        }
+      ],
       "get": {
-        "tags": ["tasks"],
+        "tags": [
+          "tasks"
+        ],
         "summary": "Get a task",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       },
       "patch": {
-        "tags": ["tasks"],
+        "tags": [
+          "tasks"
+        ],
         "summary": "Update a task (partial)",
         "description": "Only fields present change. `\"schedule\": null` removes the schedule. Send `********` for a masked secret to keep the stored value.",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/TaskUpdate" } } } },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskUpdate"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/ValidationFailed" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
         }
       },
       "delete": {
-        "tags": ["tasks"],
+        "tags": [
+          "tasks"
+        ],
         "summary": "Delete a task and its execution history",
         "responses": {
-          "204": { "description": "Deleted" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/tasks/{id}/enable": {
-      "parameters": [{ "$ref": "#/components/parameters/TaskID" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TaskID"
+        }
+      ],
       "post": {
-        "tags": ["tasks"],
+        "tags": [
+          "tasks"
+        ],
         "summary": "Resume a task",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/tasks/{id}/disable": {
-      "parameters": [{ "$ref": "#/components/parameters/TaskID" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TaskID"
+        }
+      ],
       "post": {
-        "tags": ["tasks"],
+        "tags": [
+          "tasks"
+        ],
         "summary": "Pause a task",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Task" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Task"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/tasks/{id}/run": {
-      "parameters": [{ "$ref": "#/components/parameters/TaskID" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/TaskID"
+        }
+      ],
       "post": {
-        "tags": ["tasks", "executions"],
+        "tags": [
+          "tasks",
+          "executions"
+        ],
         "summary": "Queue a run now",
         "description": "Works for paused and unscheduled tasks. Send an `Idempotency-Key` to make the request safe to retry: a repeat with the same key (per application) returns the original execution with 200 and `Idempotent-Replayed: true`.",
         "parameters": [
-          { "name": "Idempotency-Key", "in": "header", "description": "Up to 255 printable ASCII characters, unique per application", "schema": { "type": "string", "maxLength": 255 } }
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "Up to 255 printable ASCII characters, unique per application",
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            }
+          }
         ],
         "responses": {
-          "202": { "description": "Queued", "headers": { "Location": { "schema": { "type": "string" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Execution" } } } },
-          "200": { "description": "Replayed: this Idempotency-Key was already used for this task", "headers": { "Idempotent-Replayed": { "schema": { "type": "string", "const": "true" } } }, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Execution" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "description": "This Idempotency-Key was already used for another task", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+          "202": {
+            "description": "Queued",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Execution"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Replayed: this Idempotency-Key was already used for this task",
+            "headers": {
+              "Idempotent-Replayed": {
+                "schema": {
+                  "type": "string",
+                  "const": "true"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Execution"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "description": "This Idempotency-Key was already used for another task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
         }
       }
     },
     "/executions": {
       "get": {
-        "tags": ["executions"],
+        "tags": [
+          "executions"
+        ],
         "summary": "List executions, newest first",
         "description": "For an application, only its own executions.",
         "parameters": [
-          { "$ref": "#/components/parameters/Limit" },
-          { "$ref": "#/components/parameters/Cursor" },
-          { "name": "task_id", "in": "query", "schema": { "type": "string" } },
-          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/ExecutionStatus" } }
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "name": "task_id",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/ExecutionStatus"
+            }
+          }
         ],
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ExecutionPage" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" },
-          "401": { "$ref": "#/components/responses/Unauthorized" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecutionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
         }
       }
     },
     "/executions/{id}": {
-      "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string", "examples": ["exe_01jc7q4zp3"] } }],
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "exe_01jc7q4zp3"
+            ]
+          }
+        }
+      ],
       "get": {
-        "tags": ["executions"],
+        "tags": [
+          "executions"
+        ],
         "summary": "Get an execution",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Execution" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Execution"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/applications": {
       "get": {
-        "tags": ["applications"],
+        "tags": [
+          "applications"
+        ],
         "summary": "List applications",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "required": ["applications"], "properties": { "applications": { "type": "array", "items": { "$ref": "#/components/schemas/Application" } } } } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "applications"
+                  ],
+                  "properties": {
+                    "applications": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Application"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
         }
       },
       "post": {
-        "tags": ["applications"],
+        "tags": [
+          "applications"
+        ],
         "summary": "Register an application",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApplicationCreate" } } } },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationCreate"
+              }
+            }
+          }
+        },
         "responses": {
-          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Application" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/ValidationFailed" }
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Application"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
         }
       }
     },
     "/applications/{id}": {
-      "parameters": [{ "$ref": "#/components/parameters/ApplicationID" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ApplicationID"
+        }
+      ],
       "get": {
-        "tags": ["applications"],
+        "tags": [
+          "applications"
+        ],
         "summary": "Get an application",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Application" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Application"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       },
       "patch": {
-        "tags": ["applications"],
+        "tags": [
+          "applications"
+        ],
         "summary": "Rename, describe, enable or disable an application",
         "description": "Disabling stops the application's API keys from working (403) and its tasks from being scheduled. The default application cannot be renamed or disabled.",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ApplicationUpdate" } } } },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ApplicationUpdate"
+              }
+            }
+          }
+        },
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Application" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/ValidationFailed" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Application"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
         }
       },
       "delete": {
-        "tags": ["applications"],
+        "tags": [
+          "applications"
+        ],
         "summary": "Delete an application and its keys",
         "description": "Fails with 409 while the application owns tasks, and for the default application.",
         "responses": {
-          "204": { "description": "Deleted" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" }
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
         }
       }
     },
     "/applications/{id}/keys": {
-      "parameters": [{ "$ref": "#/components/parameters/ApplicationID" }],
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/ApplicationID"
+        }
+      ],
       "get": {
-        "tags": ["applications"],
+        "tags": [
+          "applications"
+        ],
         "summary": "List an application's API keys (without the keys themselves)",
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "type": "object", "required": ["keys"], "properties": { "keys": { "type": "array", "items": { "$ref": "#/components/schemas/ApiKey" } } } } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "keys"
+                  ],
+                  "properties": {
+                    "keys": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ApiKey"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       },
       "post": {
-        "tags": ["applications"],
+        "tags": [
+          "applications"
+        ],
         "summary": "Create an API key",
         "description": "The response is the only time the key is returned. To rotate: create a new key, deploy it, then revoke the old one.",
-        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["name"], "additionalProperties": false, "properties": { "name": { "type": "string", "maxLength": 100, "examples": ["production"] } } } } } },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 100,
+                    "examples": [
+                      "production"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
         "responses": {
-          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/NewApiKey" } } } },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" },
-          "409": { "$ref": "#/components/responses/Conflict" },
-          "422": { "$ref": "#/components/responses/ValidationFailed" }
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewApiKey"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
         }
       }
     },
     "/applications/{id}/keys/{keyID}": {
       "parameters": [
-        { "$ref": "#/components/parameters/ApplicationID" },
-        { "name": "keyID", "in": "path", "required": true, "schema": { "type": "string", "examples": ["key_01jc7q4zp3"] } }
+        {
+          "$ref": "#/components/parameters/ApplicationID"
+        },
+        {
+          "name": "keyID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "key_01jc7q4zp3"
+            ]
+          }
+        }
       ],
       "delete": {
-        "tags": ["applications"],
+        "tags": [
+          "applications"
+        ],
         "summary": "Revoke an API key (permanent)",
         "responses": {
-          "204": { "description": "Revoked" },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "403": { "$ref": "#/components/responses/Forbidden" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "204": {
+            "description": "Revoked"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/webhooks": {
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "List webhook endpoints",
+        "description": "For an application, only its own; `application_id` is ignored.",
+        "parameters": [
+          {
+            "name": "application_id",
+            "in": "query",
+            "description": "Admin only: filter by application",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "webhooks"
+                  ],
+                  "properties": {
+                    "webhooks": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookEndpoint"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Register a webhook endpoint",
+        "description": "The response contains the signing `secret`, the only time it is returned.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEndpointCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointWithSecret"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "whk_01jc7q4zp3"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Get a webhook endpoint (without its secret)",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Change URL, description, event filter or enabled state",
+        "description": "Disabling pauses delivery: pending deliveries wait and are sent when the endpoint is re-enabled.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WebhookEndpointUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpoint"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationFailed"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Delete an endpoint and its delivery log",
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/rotate-secret": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "whk_01jc7q4zp3"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Replace the signing secret",
+        "description": "Takes effect immediately, including for retries of earlier events. Returns the new secret, the only time it is shown.",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookEndpointWithSecret"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/test": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "whk_01jc7q4zp3"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Send a webhook.test event to this endpoint",
+        "description": "Sent even if the endpoint is disabled or filters events out.",
+        "responses": {
+          "202": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/deliveries": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "whk_01jc7q4zp3"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Delivery log, newest first (without payloads)",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "delivered",
+                "failed"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "deliveries"
+                  ],
+                  "properties": {
+                    "deliveries": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/WebhookDelivery"
+                      }
+                    },
+                    "next_cursor": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/deliveries/{deliveryID}": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "whk_01jc7q4zp3"
+            ]
+          }
+        },
+        {
+          "name": "deliveryID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "dlv_01jc7q4zp3"
+            ]
+          }
+        }
+      ],
+      "get": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "One delivery, with its payload",
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/webhooks/{id}/deliveries/{deliveryID}/redeliver": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "whk_01jc7q4zp3"
+            ]
+          }
+        },
+        {
+          "name": "deliveryID",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "examples": [
+              "dlv_01jc7q4zp3"
+            ]
+          }
+        }
+      ],
+      "post": {
+        "tags": [
+          "webhooks"
+        ],
+        "summary": "Send a delivery again, with a fresh set of attempts",
+        "responses": {
+          "202": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookDelivery"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     }
   },
   "components": {
     "securitySchemes": {
-      "bearer": { "type": "http", "scheme": "bearer", "description": "The admin token, or an application API key (cwk_...)" }
+      "bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The admin token, or an application API key (cwk_...)"
+      }
     },
     "parameters": {
-      "TaskID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "examples": ["tsk_01jc7q4zp3"] } },
-      "ApplicationID": { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "examples": ["app_01jc7q4zp3"] } },
-      "Limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
-      "Cursor": { "name": "cursor", "in": "query", "description": "`next_cursor` from the previous page", "schema": { "type": "string" } }
+      "TaskID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "examples": [
+            "tsk_01jc7q4zp3"
+          ]
+        }
+      },
+      "ApplicationID": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string",
+          "examples": [
+            "app_01jc7q4zp3"
+          ]
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "default": 50
+        }
+      },
+      "Cursor": {
+        "name": "cursor",
+        "in": "query",
+        "description": "`next_cursor` from the previous page",
+        "schema": {
+          "type": "string"
+        }
+      }
     },
     "responses": {
-      "BadRequest": { "description": "Malformed request, parameter or header", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "Unauthorized": { "description": "Missing, invalid or revoked token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "Forbidden": { "description": "Admin token required, or the application is disabled", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "NotFound": { "description": "Does not exist, or belongs to another application", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "Conflict": { "description": "Conflicts with the current state, such as a duplicate name", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
-      "ValidationFailed": { "description": "One or more fields are invalid; `details` lists each", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+      "BadRequest": {
+        "description": "Malformed request, parameter or header",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing, invalid or revoked token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Admin token required, or the application is disabled",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Does not exist, or belongs to another application",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Conflicts with the current state, such as a duplicate name",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      },
+      "ValidationFailed": {
+        "description": "One or more fields are invalid; `details` lists each",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/Error"
+            }
+          }
+        }
+      }
     },
     "schemas": {
       "Error": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
             "type": "object",
-            "required": ["code", "message"],
+            "required": [
+              "code",
+              "message"
+            ],
             "properties": {
-              "code": { "type": "string", "examples": ["validation_failed", "not_found", "unauthorized", "forbidden", "conflict", "idempotency_conflict", "application_disabled"] },
-              "message": { "type": "string" },
-              "details": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Field path to problem, for validation_failed" }
+              "code": {
+                "type": "string",
+                "examples": [
+                  "validation_failed",
+                  "not_found",
+                  "unauthorized",
+                  "forbidden",
+                  "conflict",
+                  "idempotency_conflict",
+                  "application_disabled"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "description": "Field path to problem, for validation_failed"
+              }
             }
           }
         }
@@ -315,210 +1416,835 @@
       "Meta": {
         "type": "object",
         "properties": {
-          "version": { "type": "string" },
-          "shell_enabled": { "type": "boolean", "description": "Whether this caller may create shell tasks" },
-          "runners": { "type": "array", "items": { "$ref": "#/components/schemas/RunnerType" } },
+          "version": {
+            "type": "string"
+          },
+          "shell_enabled": {
+            "type": "boolean",
+            "description": "Whether this caller may create shell tasks"
+          },
+          "runners": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunnerType"
+            }
+          },
           "principal": {
             "type": "object",
-            "required": ["type"],
+            "required": [
+              "type"
+            ],
             "properties": {
-              "type": { "type": "string", "enum": ["admin", "application"] },
-              "application_id": { "type": "string" },
-              "application_name": { "type": "string" }
+              "type": {
+                "type": "string",
+                "enum": [
+                  "admin",
+                  "application"
+                ]
+              },
+              "application_id": {
+                "type": "string"
+              },
+              "application_name": {
+                "type": "string"
+              }
             }
           }
         }
       },
-      "RunnerType": { "type": "string", "enum": ["http", "shell"] },
+      "RunnerType": {
+        "type": "string",
+        "enum": [
+          "http",
+          "shell"
+        ]
+      },
       "HttpConfig": {
         "type": "object",
-        "required": ["url"],
+        "required": [
+          "url"
+        ],
         "additionalProperties": false,
         "properties": {
-          "method": { "type": "string", "enum": ["GET", "POST", "PUT", "PATCH", "DELETE"], "default": "GET" },
-          "url": { "type": "string", "format": "uri", "maxLength": 2048 },
-          "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Secret-looking values are returned as ********" },
-          "query": { "type": "object", "additionalProperties": { "type": "string" } },
-          "body": { "type": "string", "maxLength": 262144 },
-          "expected_status": { "type": "array", "items": { "type": "integer", "minimum": 100, "maximum": 599 }, "description": "Empty means any 2xx" }
+          "method": {
+            "type": "string",
+            "enum": [
+              "GET",
+              "POST",
+              "PUT",
+              "PATCH",
+              "DELETE"
+            ],
+            "default": "GET"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Secret-looking values are returned as ********"
+          },
+          "query": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 262144
+          },
+          "expected_status": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 100,
+              "maximum": 599
+            },
+            "description": "Empty means any 2xx"
+          }
         }
       },
       "ShellConfig": {
         "type": "object",
-        "required": ["command"],
+        "required": [
+          "command"
+        ],
         "additionalProperties": false,
         "description": "Admin only, and only when the server sets CLOCKWORK_ENABLE_SHELL=true",
         "properties": {
-          "command": { "type": "string", "description": "Run with sh -c" },
-          "working_dir": { "type": "string" },
-          "env": { "type": "object", "additionalProperties": { "type": "string" } }
+          "command": {
+            "type": "string",
+            "description": "Run with sh -c"
+          },
+          "working_dir": {
+            "type": "string"
+          },
+          "env": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
         }
       },
       "Runner": {
         "type": "object",
-        "required": ["type", "config"],
+        "required": [
+          "type",
+          "config"
+        ],
         "properties": {
-          "type": { "$ref": "#/components/schemas/RunnerType" },
-          "config": { "oneOf": [{ "$ref": "#/components/schemas/HttpConfig" }, { "$ref": "#/components/schemas/ShellConfig" }] }
+          "type": {
+            "$ref": "#/components/schemas/RunnerType"
+          },
+          "config": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/HttpConfig"
+              },
+              {
+                "$ref": "#/components/schemas/ShellConfig"
+              }
+            ]
+          }
         }
       },
       "Schedule": {
-        "type": ["object", "null"],
-        "required": ["cron"],
+        "type": [
+          "object",
+          "null"
+        ],
+        "required": [
+          "cron"
+        ],
         "properties": {
-          "cron": { "type": "string", "description": "5-field cron, or @hourly, @daily, @weekly, @monthly, @yearly", "examples": ["*/5 * * * *"] },
-          "timezone": { "type": "string", "default": "UTC", "examples": ["Asia/Jakarta"] },
-          "misfire_policy": { "type": "string", "enum": ["skip", "run_once"], "default": "skip" },
-          "concurrency_policy": { "type": "string", "enum": ["forbid", "allow"], "default": "forbid" }
+          "cron": {
+            "type": "string",
+            "description": "5-field cron, or @hourly, @daily, @weekly, @monthly, @yearly",
+            "examples": [
+              "*/5 * * * *"
+            ]
+          },
+          "timezone": {
+            "type": "string",
+            "default": "UTC",
+            "examples": [
+              "Asia/Jakarta"
+            ]
+          },
+          "misfire_policy": {
+            "type": "string",
+            "enum": [
+              "skip",
+              "run_once"
+            ],
+            "default": "skip"
+          },
+          "concurrency_policy": {
+            "type": "string",
+            "enum": [
+              "forbid",
+              "allow"
+            ],
+            "default": "forbid"
+          }
         }
       },
       "RetryPolicy": {
         "type": "object",
-        "required": ["max_attempts", "backoff_initial_seconds", "backoff_max_seconds"],
+        "required": [
+          "max_attempts",
+          "backoff_initial_seconds",
+          "backoff_max_seconds"
+        ],
         "properties": {
-          "max_attempts": { "type": "integer", "minimum": 1, "maximum": 20, "default": 1 },
-          "backoff_initial_seconds": { "type": "integer", "minimum": 1, "maximum": 3600, "default": 10 },
-          "backoff_max_seconds": { "type": "integer", "minimum": 1, "maximum": 86400, "default": 300 }
+          "max_attempts": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "default": 1
+          },
+          "backoff_initial_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 3600,
+            "default": 10
+          },
+          "backoff_max_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400,
+            "default": 300
+          }
         }
       },
       "Task": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "application_id": { "type": "string" },
-          "name": { "type": "string" },
-          "description": { "type": "string" },
-          "runner": { "$ref": "#/components/schemas/Runner" },
-          "schedule": { "$ref": "#/components/schemas/Schedule" },
-          "timeout_seconds": { "type": "integer" },
-          "retry": { "$ref": "#/components/schemas/RetryPolicy" },
-          "enabled": { "type": "boolean" },
-          "next_run_at": { "type": ["string", "null"], "format": "date-time" },
-          "created_at": { "type": "string", "format": "date-time" },
-          "updated_at": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "string"
+          },
+          "application_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "runner": {
+            "$ref": "#/components/schemas/Runner"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/Schedule"
+          },
+          "timeout_seconds": {
+            "type": "integer"
+          },
+          "retry": {
+            "$ref": "#/components/schemas/RetryPolicy"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "next_run_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "TaskCreate": {
         "type": "object",
-        "required": ["name", "runner"],
+        "required": [
+          "name",
+          "runner"
+        ],
         "additionalProperties": false,
         "properties": {
-          "application_id": { "type": "string", "description": "Admin only; defaults to app_clockwork" },
-          "name": { "type": "string", "maxLength": 100 },
-          "description": { "type": "string", "maxLength": 2000 },
-          "runner": { "$ref": "#/components/schemas/Runner" },
-          "schedule": { "$ref": "#/components/schemas/Schedule" },
-          "timeout_seconds": { "type": "integer", "minimum": 1, "maximum": 86400, "default": 30 },
-          "retry": { "$ref": "#/components/schemas/RetryPolicy" },
-          "enabled": { "type": "boolean", "default": true }
+          "application_id": {
+            "type": "string",
+            "description": "Admin only; defaults to app_clockwork"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "runner": {
+            "$ref": "#/components/schemas/Runner"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/Schedule"
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 86400,
+            "default": 30
+          },
+          "retry": {
+            "$ref": "#/components/schemas/RetryPolicy"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          }
         }
       },
       "TaskUpdate": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string" },
-          "description": { "type": "string" },
-          "runner": { "$ref": "#/components/schemas/Runner" },
-          "schedule": { "$ref": "#/components/schemas/Schedule" },
-          "timeout_seconds": { "type": "integer" },
-          "retry": { "$ref": "#/components/schemas/RetryPolicy" },
-          "enabled": { "type": "boolean" }
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "runner": {
+            "$ref": "#/components/schemas/Runner"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/Schedule"
+          },
+          "timeout_seconds": {
+            "type": "integer"
+          },
+          "retry": {
+            "$ref": "#/components/schemas/RetryPolicy"
+          },
+          "enabled": {
+            "type": "boolean"
+          }
         }
       },
       "TaskPage": {
         "type": "object",
-        "required": ["tasks"],
+        "required": [
+          "tasks"
+        ],
         "properties": {
-          "tasks": { "type": "array", "items": { "$ref": "#/components/schemas/Task" } },
-          "next_cursor": { "type": "string" }
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Task"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
         }
       },
-      "ExecutionStatus": { "type": "string", "enum": ["queued", "running", "succeeded", "failed", "retrying", "interrupted", "canceled", "skipped"] },
+      "ExecutionStatus": {
+        "type": "string",
+        "enum": [
+          "queued",
+          "running",
+          "succeeded",
+          "failed",
+          "retrying",
+          "interrupted",
+          "canceled",
+          "skipped"
+        ]
+      },
       "Execution": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "task_id": { "type": "string" },
-          "task_name": { "type": "string" },
-          "application_id": { "type": "string" },
-          "trigger": { "type": "string", "enum": ["scheduled", "manual", "api"] },
-          "status": { "$ref": "#/components/schemas/ExecutionStatus" },
-          "attempt": { "type": "integer", "minimum": 1 },
-          "scheduled_for": { "type": ["string", "null"], "format": "date-time" },
-          "output": { "description": "HTTP: status_code, content_type, body (first 8 KiB), body_truncated, body_bytes. Shell: exit_code, stdout, stderr (first 16 KiB each) and *_truncated." },
+          "id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "task_name": {
+            "type": "string"
+          },
+          "application_id": {
+            "type": "string"
+          },
+          "trigger": {
+            "type": "string",
+            "enum": [
+              "scheduled",
+              "manual",
+              "api"
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ExecutionStatus"
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "scheduled_for": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "output": {
+            "description": "HTTP: status_code, content_type, body (first 8 KiB), body_truncated, body_bytes. Shell: exit_code, stdout, stderr (first 16 KiB each) and *_truncated."
+          },
           "error": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "properties": {
-              "kind": { "type": "string", "examples": ["timeout", "connection", "http_status", "exit_code", "config", "blocked", "interrupted", "concurrency", "internal"] },
-              "message": { "type": "string" },
-              "retryable": { "type": "boolean" },
-              "retry_at": { "type": "string", "format": "date-time", "description": "When the next attempt may start, if one was queued" }
+              "kind": {
+                "type": "string",
+                "examples": [
+                  "timeout",
+                  "connection",
+                  "http_status",
+                  "exit_code",
+                  "config",
+                  "blocked",
+                  "interrupted",
+                  "concurrency",
+                  "internal"
+                ]
+              },
+              "message": {
+                "type": "string"
+              },
+              "retryable": {
+                "type": "boolean"
+              },
+              "retry_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "When the next attempt may start, if one was queued"
+              }
             }
           },
-          "created_at": { "type": "string", "format": "date-time" },
-          "run_after": { "type": "string", "format": "date-time" },
-          "started_at": { "type": ["string", "null"], "format": "date-time" },
-          "finished_at": { "type": ["string", "null"], "format": "date-time" },
-          "duration_ms": { "type": ["integer", "null"] },
-          "idempotency_key": { "type": "string" }
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "run_after": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "started_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "finished_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "duration_ms": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "idempotency_key": {
+            "type": "string"
+          }
         }
       },
       "ExecutionPage": {
         "type": "object",
-        "required": ["executions"],
+        "required": [
+          "executions"
+        ],
         "properties": {
-          "executions": { "type": "array", "items": { "$ref": "#/components/schemas/Execution" } },
-          "next_cursor": { "type": "string" }
+          "executions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Execution"
+            }
+          },
+          "next_cursor": {
+            "type": "string"
+          }
         }
       },
       "Application": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "name": { "type": "string" },
-          "description": { "type": "string" },
-          "enabled": { "type": "boolean" },
-          "task_count": { "type": "integer" },
-          "created_at": { "type": "string", "format": "date-time" },
-          "updated_at": { "type": "string", "format": "date-time" }
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "task_count": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "ApplicationCreate": {
         "type": "object",
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "maxLength": 100, "examples": ["billing-service"] },
-          "description": { "type": "string", "maxLength": 2000 }
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "maxLength": 100,
+            "examples": [
+              "billing-service"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          }
         }
       },
       "ApplicationUpdate": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$", "maxLength": 100 },
-          "description": { "type": "string", "maxLength": 2000 },
-          "enabled": { "type": "boolean" }
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]*$",
+            "maxLength": 100
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "enabled": {
+            "type": "boolean"
+          }
         }
       },
       "ApiKey": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "application_id": { "type": "string" },
-          "name": { "type": "string" },
-          "prefix": { "type": "string", "description": "First characters of the key, to tell keys apart", "examples": ["cwk_4fj2k9"] },
-          "created_at": { "type": "string", "format": "date-time" },
-          "last_used_at": { "type": ["string", "null"], "format": "date-time" },
-          "revoked_at": { "type": ["string", "null"], "format": "date-time" }
+          "id": {
+            "type": "string"
+          },
+          "application_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "prefix": {
+            "type": "string",
+            "description": "First characters of the key, to tell keys apart",
+            "examples": [
+              "cwk_4fj2k9"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_used_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "revoked_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
         }
       },
       "NewApiKey": {
         "allOf": [
-          { "$ref": "#/components/schemas/ApiKey" },
-          { "type": "object", "required": ["key"], "properties": { "key": { "type": "string", "description": "The API key. Shown only in this response.", "examples": ["cwk_4fj2k9..."] } } }
+          {
+            "$ref": "#/components/schemas/ApiKey"
+          },
+          {
+            "type": "object",
+            "required": [
+              "key"
+            ],
+            "properties": {
+              "key": {
+                "type": "string",
+                "description": "The API key. Shown only in this response.",
+                "examples": [
+                  "cwk_4fj2k9..."
+                ]
+              }
+            }
+          }
         ]
+      },
+      "WebhookEventType": {
+        "type": "string",
+        "enum": [
+          "execution.started",
+          "execution.succeeded",
+          "execution.failed",
+          "execution.retrying",
+          "execution.interrupted",
+          "execution.skipped",
+          "webhook.test"
+        ]
+      },
+      "WebhookEndpoint": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "application_id": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookEventType"
+            },
+            "description": "Empty: every event type"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "WebhookEndpointWithSecret": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/WebhookEndpoint"
+          },
+          {
+            "type": "object",
+            "required": [
+              "secret"
+            ],
+            "properties": {
+              "secret": {
+                "type": "string",
+                "examples": [
+                  "whsec_..."
+                ],
+                "description": "HMAC-SHA256 signing key. Shown only in this response."
+              }
+            }
+          }
+        ]
+      },
+      "WebhookEndpointCreate": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "type": "string",
+            "description": "Admin only; defaults to app_clockwork"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookEventType"
+            }
+          }
+        }
+      },
+      "WebhookEndpointUpdate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "description": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookEventType"
+            }
+          },
+          "enabled": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WebhookDelivery": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Sent as Clockwork-Delivery; the same on every attempt"
+          },
+          "endpoint_id": {
+            "type": "string"
+          },
+          "application_id": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "$ref": "#/components/schemas/WebhookEventType"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "delivered",
+              "failed"
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "next_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_attempt_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "last_status_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_response": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "First 1 KiB of the last response body"
+          },
+          "delivered_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/WebhookEvent"
+          }
+        }
+      },
+      "WebhookEvent": {
+        "type": "object",
+        "description": "The JSON body POSTed to endpoints. Headers: Clockwork-Signature (t=<unix>,v1=<hex HMAC-SHA256(secret, \"<t>.<body>\")>), Clockwork-Event, Clockwork-Event-Id, Clockwork-Delivery.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "type": {
+            "$ref": "#/components/schemas/WebhookEventType"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "application_id": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "execution": {
+                "$ref": "#/components/schemas/Execution"
+              }
+            }
+          }
+        }
       }
     }
   }

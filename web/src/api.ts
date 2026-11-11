@@ -83,6 +83,45 @@ export interface NewApiKey extends ApiKey {
 
 export const DEFAULT_APP_ID = "app_clockwork";
 
+export const webhookEventTypes = [
+  "execution.started",
+  "execution.succeeded",
+  "execution.failed",
+  "execution.retrying",
+  "execution.interrupted",
+  "execution.skipped",
+  "webhook.test",
+] as const;
+export type WebhookEventType = (typeof webhookEventTypes)[number];
+
+export interface WebhookEndpoint {
+  id: string;
+  application_id: string;
+  url: string;
+  description: string;
+  events: WebhookEventType[]; // empty: every event
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  secret?: string; // only on create and rotate
+}
+
+export interface WebhookDelivery {
+  id: string;
+  endpoint_id: string;
+  event_id: string;
+  event_type: WebhookEventType;
+  status: "pending" | "delivered" | "failed";
+  attempts: number;
+  next_attempt_at: string | null;
+  last_attempt_at: string | null;
+  last_status_code: number | null;
+  last_error: string | null;
+  last_response: string | null;
+  delivered_at: string | null;
+  created_at: string;
+}
+
 export interface Meta {
   version: string;
   shell_enabled: boolean;
@@ -227,6 +266,19 @@ export const api = {
   deleteApplication: (id: string) => request<void>("DELETE", `/applications/${encodeURIComponent(id)}`),
   listKeys: (appId: string) => request<{ keys: ApiKey[] }>("GET", `/applications/${encodeURIComponent(appId)}/keys`).then((r) => r.keys),
   createKey: (appId: string, name: string) => request<NewApiKey>("POST", `/applications/${encodeURIComponent(appId)}/keys`, { name }),
+  listWebhooks: (appId: string) =>
+    request<{ webhooks: WebhookEndpoint[] }>("GET", `/webhooks${query({ application_id: appId })}`).then((r) => r.webhooks),
+  createWebhook: (input: { application_id: string; url: string; description: string; events: WebhookEventType[] }) =>
+    request<WebhookEndpoint>("POST", "/webhooks", input),
+  updateWebhook: (id: string, input: Partial<Pick<WebhookEndpoint, "url" | "description" | "events" | "enabled">>) =>
+    request<WebhookEndpoint>("PATCH", `/webhooks/${encodeURIComponent(id)}`, input),
+  deleteWebhook: (id: string) => request<void>("DELETE", `/webhooks/${encodeURIComponent(id)}`),
+  rotateWebhookSecret: (id: string) => request<WebhookEndpoint>("POST", `/webhooks/${encodeURIComponent(id)}/rotate-secret`),
+  testWebhook: (id: string) => request<WebhookDelivery>("POST", `/webhooks/${encodeURIComponent(id)}/test`),
+  listDeliveries: (id: string) =>
+    request<{ deliveries: WebhookDelivery[] }>("GET", `/webhooks/${encodeURIComponent(id)}/deliveries?limit=20`).then((r) => r.deliveries),
+  redeliver: (id: string, deliveryId: string) =>
+    request<WebhookDelivery>("POST", `/webhooks/${encodeURIComponent(id)}/deliveries/${encodeURIComponent(deliveryId)}/redeliver`),
   revokeKey: (appId: string, keyId: string) =>
     request<void>("DELETE", `/applications/${encodeURIComponent(appId)}/keys/${encodeURIComponent(keyId)}`),
   listTasks: (params: { q?: string; enabled?: boolean; application_id?: string; cursor?: string; limit?: number } = {}) =>

@@ -45,14 +45,17 @@ func NewHTTP(o HTTPOptions) *HTTP {
 	if ua == "" {
 		ua = "Clockwork"
 	}
-	h := &HTTP{userAgent: ua, guarded: newClient(true)}
+	h := &HTTP{userAgent: ua, guarded: NewClient(true, true)}
 	if !o.DenyPrivate {
-		h.open = newClient(false)
+		h.open = NewClient(false, true)
 	}
 	return h
 }
 
-func newClient(denyPrivate bool) *http.Client {
+// NewClient returns an HTTP client for outbound calls. With denyPrivate, it
+// refuses non-public addresses (see IsBlocked). Without followRedirects, a 3xx
+// response is returned as is. The webhook dispatcher uses it too.
+func NewClient(denyPrivate, followRedirects bool) *http.Client {
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	if denyPrivate {
 		dialer.Control = denyPrivateAddr
@@ -69,6 +72,9 @@ func newClient(denyPrivate bool) *http.Client {
 	return &http.Client{
 		Transport: transport,
 		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+			if !followRedirects {
+				return http.ErrUseLastResponse
+			}
 			if len(via) >= 5 {
 				return errors.New("stopped after 5 redirects")
 			}
@@ -184,6 +190,12 @@ func unwrapURLError(err error) error {
 }
 
 type blockedAddrError struct{ addr netip.Addr }
+
+// IsBlocked reports whether err comes from refusing a non-public address.
+func IsBlocked(err error) bool {
+	var b *blockedAddrError
+	return errors.As(err, &b)
+}
 
 func (e *blockedAddrError) Error() string {
 	return fmt.Sprintf("destination %s is not a public address, and this task may only reach public addresses", e.addr)

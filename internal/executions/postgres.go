@@ -135,3 +135,17 @@ func (r *PostgresRepository) Enqueue(ctx context.Context, e Execution) (Executio
 	}
 	return e, replayed, nil
 }
+
+// RowQuerier is satisfied by *pgxpool.Pool and pgx.Tx.
+type RowQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// Load reads one execution through q, so callers can see their own uncommitted changes.
+func Load(ctx context.Context, q RowQuerier, id string) (Execution, error) {
+	e, err := scanExecution(q.QueryRow(ctx, selectExecution+` WHERE e.id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Execution{}, ErrNotFound
+	}
+	return e, err
+}

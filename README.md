@@ -4,7 +4,7 @@ Transcend Beyond the Clock.
 
 Clockwork is a lightweight, self-hosted automation and task scheduling platform for developers. Define an automation once, schedule it, and let Clockwork run it reliably, whether the task belongs to Clockwork itself or to an external application.
 
-> **Status: Milestone 5 (Integration).** Create HTTP and shell tasks with cron schedules through the UI and API. Clockwork runs them on schedule or on demand, retries failures with backoff, recovers runs from crashed workers, and records every attempt. Other services integrate as **applications**: each gets its own API keys and only sees its own tasks and executions. Webhooks arrive in M6. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
+> **Status: Milestone 6 (Webhooks).** Create HTTP and shell tasks with cron schedules through the UI and API. Clockwork runs them on schedule or on demand, retries failures with backoff, recovers runs from crashed workers, and records every attempt. Other services integrate as **applications** with their own API keys, isolated from each other, and can receive **signed webhooks** when their runs start, succeed or fail. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
 
 ## Quick start (Docker Compose)
 
@@ -67,6 +67,12 @@ The full API is described by `GET /api/v1/openapi.json` (OpenAPI 3.1, no authent
 | `GET`, `PATCH`, `DELETE /api/v1/applications/{id}` | Get, rename, describe, enable/disable or delete an application. Admin only. |
 | `GET`, `POST /api/v1/applications/{id}/keys` | List an application's API keys, or create one. Admin only. |
 | `DELETE /api/v1/applications/{id}/keys/{keyID}` | Revoke a key. Admin only. |
+| `GET`, `POST /api/v1/webhooks` | List or register webhook endpoints. The signing secret is returned once, on create. |
+| `GET`, `PATCH`, `DELETE /api/v1/webhooks/{id}` | Get, change (URL, events, enabled) or delete an endpoint. |
+| `POST /api/v1/webhooks/{id}/rotate-secret` | Replace the signing secret. |
+| `POST /api/v1/webhooks/{id}/test` | Send a `webhook.test` event. |
+| `GET /api/v1/webhooks/{id}/deliveries` and `/deliveries/{deliveryID}` | Delivery log, and one delivery with its payload. |
+| `POST /api/v1/webhooks/{id}/deliveries/{deliveryID}/redeliver` | Send a delivery again. |
 
 Example:
 
@@ -105,6 +111,27 @@ Secret-looking headers, query parameters and environment variables (`Authorizati
 5. To rotate a key: create a new one, deploy it, then revoke the old one. Disabling an application refuses its keys (`403 application_disabled`) and stops scheduling its tasks until it is re-enabled.
 
 [examples/integration](examples/integration) is a small client that follows these patterns.
+
+### Webhooks
+
+An application (or the operator, for any application) registers endpoints that receive its events as signed JSON `POST`s:
+
+| Event | When |
+|---|---|
+| `execution.started` | A worker starts an attempt. |
+| `execution.succeeded` | An attempt succeeded. |
+| `execution.retrying` | An attempt failed and the next one is queued. |
+| `execution.failed` | An attempt failed and no attempt follows. |
+| `execution.interrupted` | Shutdown or a lost worker interrupted an attempt. It may be retried. |
+| `execution.skipped` | A run was skipped: `concurrency_policy=forbid` and another run was active. |
+| `webhook.test` | You asked for one with `POST /webhooks/{id}/test`. |
+
+- **Body:** `{"id": "evt_…", "type": "…", "created_at": "…", "application_id": "…", "data": {"execution": {…}}}`. `data.execution` is the execution as the API returns it, at the moment of the event.
+- **Headers:** `Clockwork-Event`, `Clockwork-Event-Id`, `Clockwork-Delivery` (stable across retries: deduplicate on it), and `Clockwork-Signature: t=<unix>,v1=<hex>`. The `v1` value is HMAC-SHA256 of `"<t>.<raw body>"`, keyed with the endpoint's secret. Verify it in constant time and reject old timestamps. [examples/webhook-receiver](examples/webhook-receiver) shows how.
+- **Retries:** any answer other than 2xx, a redirect, or no answer within 10 seconds is a failure. Failures are retried after 10s, 30s, 2m, 10m, 30m, 1h, 3h, 6h and 15h, for 10 attempts, then the delivery is marked `failed`. The delivery log records every attempt's status code, error and the start of the response. Any delivery can be sent again.
+- **Ordering and duplicates:** delivery is at-least-once and not ordered. Use `data.execution.status` and timestamps, not arrival order.
+- **Event filters:** an endpoint with an empty `events` list gets every event. Pausing an endpoint holds its deliveries until it is resumed.
+- **Address rules:** endpoints follow the same rule as HTTP tasks. Application endpoints must be public addresses unless `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true`.
 
 ### Schedules
 
@@ -202,6 +229,8 @@ docker run --rm -v "$PWD:/src:ro" -w /src -e GOFLAGS=-buildvcs=false \
 | Port 8080 already in use | Set `CLOCKWORK_PORT` in `.env`. |
 | Execution failed with `config: the shell runner is not enabled on this server` | The task was created while shell was enabled. Re-enable it, or change the task to an HTTP runner. |
 | Execution failed with `blocked: destination … is not a public address` | The URL resolves to an internal address. Tasks owned by applications need `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true` for that; with `CLOCKWORK_HTTP_DENY_PRIVATE=true` no task may. |
+| Webhook deliveries stay `pending` | The endpoint is paused, or failing. Check `last_error` in its delivery log, or send a test event. |
+| Receiver rejects the signature | Verify the raw body bytes before parsing them, use the current secret (rotation takes effect immediately), and check the receiver's clock. |
 | `403 application_disabled` | The application for that API key is disabled. Enable it under **Integrations**. |
 | The UI says "That is an application API key" | Sign in with the admin token. API keys are for applications calling the API. |
 | Runs stay `queued` | Check the logs for `executor started` and for claim errors, and that the task's `run_after` has passed. |

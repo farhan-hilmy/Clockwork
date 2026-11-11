@@ -32,6 +32,7 @@ import (
 	"github.com/farhan-hilmy/clockwork/internal/ids"
 	"github.com/farhan-hilmy/clockwork/internal/runners"
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
+	"github.com/farhan-hilmy/clockwork/internal/webhooks"
 )
 
 // Options configures a Pool.
@@ -253,16 +254,20 @@ func (p *Pool) claimOne(ctx context.Context) (claimed, claimOutcome, error) {
 				outcome = claimSkipped
 				errJSON, _ := json.Marshal(runners.Failure{Kind: "concurrency",
 					Message: "skipped: a previous run of this task is still active (concurrency_policy=forbid)"})
-				_, err := tx.Exec(ctx, `UPDATE executions SET status = 'skipped', error = $2, finished_at = $3 WHERE id = $1`,
-					e.id, errJSON, now)
-				return err
+				if _, err := tx.Exec(ctx, `UPDATE executions SET status = 'skipped', error = $2, finished_at = $3 WHERE id = $1`,
+					e.id, errJSON, now); err != nil {
+					return err
+				}
+				return emit(ctx, tx, e.id, e.appID, webhooks.EventExecutionSkipped, now)
 			}
 		}
 
 		outcome = claimRunning
-		_, err = tx.Exec(ctx, `UPDATE executions SET status = 'running', started_at = $2, lease_expires_at = $3 WHERE id = $1`,
-			e.id, now, now.Add(p.lease))
-		return err
+		if _, err := tx.Exec(ctx, `UPDATE executions SET status = 'running', started_at = $2, lease_expires_at = $3 WHERE id = $1`,
+			e.id, now, now.Add(p.lease)); err != nil {
+			return err
+		}
+		return emit(ctx, tx, e.id, e.appID, webhooks.EventExecutionStarted, now)
 	})
 	if err != nil {
 		return claimed{}, claimNone, fmt.Errorf("claim: %w", err)
@@ -416,17 +421,41 @@ func (p *Pool) finish(ctx context.Context, tx pgx.Tx, a attempt, status string, 
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 || retryAt == nil {
-		// RowsAffected 0: the row changed under us (deleted with its task, or
-		// recovered after an expired lease). Its new owner decides what happens next.
+	if tag.RowsAffected() == 0 {
+		// The row changed under us (deleted with its task, or recovered after an
+		// expired lease). Its new owner decides what happens next.
 		return nil
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO executions
-		(id, task_id, application_id, trigger, status, attempt, scheduled_for, created_at, run_after)
-		VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8)
-		ON CONFLICT DO NOTHING`,
-		ids.New("exe"), a.taskID, a.appID, a.trigger, a.number+1, a.scheduledFor, finished, *retryAt)
-	return err
+	if retryAt != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO executions
+			(id, task_id, application_id, trigger, status, attempt, scheduled_for, created_at, run_after)
+			VALUES ($1, $2, $3, $4, 'queued', $5, $6, $7, $8)
+			ON CONFLICT DO NOTHING`,
+			ids.New("exe"), a.taskID, a.appID, a.trigger, a.number+1, a.scheduledFor, finished, *retryAt); err != nil {
+			return err
+		}
+	}
+	return emit(ctx, tx, a.id, a.appID, eventFor[status], p.clock())
+}
+
+// eventFor maps the status an attempt ends in to the webhook event announcing it.
+var eventFor = map[string]string{
+	executions.StatusSucceeded:   webhooks.EventExecutionSucceeded,
+	executions.StatusFailed:      webhooks.EventExecutionFailed,
+	executions.StatusRetrying:    webhooks.EventExecutionRetrying,
+	executions.StatusInterrupted: webhooks.EventExecutionInterrupted,
+}
+
+// emit records a webhook event for an execution in tx, the transaction that
+// changed it, with a snapshot of the execution as the event's data.
+func emit(ctx context.Context, tx pgx.Tx, executionID, appID, eventType string, at time.Time) error {
+	return webhooks.Emit(ctx, tx, appID, eventType, func() (any, error) {
+		exe, err := executions.Load(ctx, tx, executionID)
+		if err != nil {
+			return nil, fmt.Errorf("load execution for webhook: %w", err)
+		}
+		return map[string]any{"execution": exe}, nil
+	}, at)
 }
 
 func (p *Pool) recoveryLoop(ctx context.Context) {

@@ -36,7 +36,7 @@ One Go binary and one PostgreSQL database. There is no Redis, message broker or 
 | `executor` | Worker pool: claims queued executions, applies timeout and retry, records results. | M3/M4 |
 | `runners` | `Runner` interface plus `http` and `shell` implementations. | M3 |
 | `apps` | Application identity, API keys, ownership checks. | M5 |
-| `webhooks` | Endpoint registration, signed delivery, retries, delivery log. | M6 |
+| `webhooks` | Endpoint registration, event outbox, signed delivery (dispatcher), retries, delivery log. | M6 |
 
 These boundaries are enforced by direction of imports: `httpapi` → `tasks`/`apps`/… → `store`. Domain packages never import `httpapi`, and runners never import the scheduler.
 
@@ -48,7 +48,8 @@ These boundaries are enforced by direction of imports: `httpapi` → `tasks`/`ap
 | `tasks` | Definition: runner type + JSON config, optional schedule (cron, timezone, misfire and concurrency policy), timeout, retry policy, enabled flag, `next_run_at`. |
 | `executions` | One row per attempt: trigger, status, attempt number, input, output or error, timestamps, duration, optional idempotency key. |
 | `app_credentials` | API keys per application: name, display prefix, SHA-256 hash of the key, `last_used_at` (written at most once a minute), `revoked_at`. Deleted with their application. |
-| `webhook_endpoints`, `webhook_deliveries` (M6) | Registered endpoints and per-event delivery attempts. |
+| `webhook_endpoints` | URLs owned by an application, with an event filter, a signing secret and an enabled flag. |
+| `webhook_deliveries` | The outbox: one row per (event, endpoint), carrying the payload, status, attempts, next attempt time and the last response. |
 
 IDs are prefixed ULIDs (`tsk_…`, `exe_…`, `app_…`). They sort by creation time, which makes cursor pagination simple.
 
@@ -90,6 +91,14 @@ Tasks without a schedule have no place to set the policy and use `forbid`.
 
 **Graceful shutdown.** On SIGTERM: the scheduler stops, the executor stops claiming, and in-flight runs may continue for `CLOCKWORK_SHUTDOWN_TIMEOUT`. Runs still going are then canceled (killing shell process groups), recorded as `interrupted`, and retried if attempts remain. The database pool closes only after every run is recorded. If the process is killed before that, the leases expire and another instance, or the next start, recovers the runs.
 
+**Webhooks.**
+- **Outbox:** the executor writes events in the same transaction as the state change they describe: claim (started, skipped), finish (succeeded, failed, retrying, interrupted) and lease recovery (interrupted). A crash can neither lose an event nor emit one for a change that rolled back. The payload is a snapshot of the execution read inside that transaction. When an application has no endpoints, the cost is one indexed lookup.
+- **Dispatcher:** it claims due deliveries with `FOR UPDATE SKIP LOCKED`. In the same statement it increments `attempts` and moves `next_attempt_at` one minute ahead as a lease. If the dispatcher dies mid-send, the delivery simply becomes due again; no recovery sweep is needed.
+- **Recording:** the outcome is written only if `attempts` still matches, so a concurrent redeliver is not overwritten.
+- **Retries:** after 10s, 30s, 2m, 10m, 30m, 1h, 3h, 6h and 15h; after 10 attempts the delivery is `failed`. Redirects are not followed, and the same private-address rule as HTTP tasks applies.
+- **Signing:** `Clockwork-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`, computed at send time, so retries carry a fresh timestamp. `Clockwork-Delivery` stays the same across retries.
+- **Secrets:** stored as is, because HMAC needs them. They are returned only on create and rotate, and rotation takes effect immediately.
+
 ## 4. APIs
 
 - `/healthz` (liveness) and `/readyz` (database reachable).
@@ -113,7 +122,8 @@ Tasks without a schedule have no place to set the policy and use `forbid`.
 | Credential leakage | Sensitive HTTP headers and shell environment variables are masked as `********` in every API response and log. Sending the mask back on update keeps the stored value. API keys are stored as SHA-256 hashes and shown only once, at creation. |
 | SSRF via HTTP tasks | `CLOCKWORK_HTTP_DENY_PRIVATE=true` rejects loopback, link-local, private and other non-public targets, checked on the resolved address at connect time (so DNS rebinding is covered) with proxies disabled. Tasks owned by applications get the same check by default, since an application can read its executions' output; `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true` lifts it. |
 | Oversized input | Request bodies are capped at 1 MiB, and runner configs and stored output excerpts are bounded. |
-| Webhook spoofing | Deliveries are HMAC-SHA256 signed with a per-endpoint secret and timestamp (M6). |
+| Webhook spoofing and replay | Deliveries are HMAC-SHA256 signed over a timestamp and the body with a per-endpoint secret. Receivers verify in constant time and reject old timestamps. |
+| SSRF via webhook endpoints | Same address rule as HTTP tasks, checked at connect time; redirects are not followed. |
 
 Clockwork has not had a security review. Do not expose it to the internet without one.
 

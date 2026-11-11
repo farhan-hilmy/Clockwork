@@ -26,7 +26,7 @@ func TestPostgresRunNowListGet(t *testing.T) {
 	if err := store.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks, webhook_endpoints CASCADE; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -91,7 +91,7 @@ func TestPostgresIdempotencyAndApplicationFilter(t *testing.T) {
 	if err := store.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks; DELETE FROM applications WHERE id <> 'app_clockwork';
+	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks, webhook_endpoints CASCADE; DELETE FROM applications WHERE id <> 'app_clockwork';
 		INSERT INTO applications (id, name) VALUES ('app_a', 'a'), ('app_b', 'b')`); err != nil {
 		t.Fatal(err)
 	}

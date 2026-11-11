@@ -45,7 +45,7 @@ func openTestDB(t *testing.T) *pgxpool.Pool {
 	if err := store.Migrate(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(t.Context(), `TRUNCATE executions, tasks; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
+	if _, err := pool.Exec(t.Context(), `TRUNCATE executions, tasks, webhook_endpoints CASCADE; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
 		t.Fatal(err)
 	}
 	return pool

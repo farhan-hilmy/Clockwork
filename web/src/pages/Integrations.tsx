@@ -4,6 +4,7 @@ import { api, ApiError, DEFAULT_APP_ID, type ApiKey, type Application, type NewA
 import { formatDateTime, relativeTime } from "../format";
 import { useAsync } from "../hooks";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, Field, PageHeader, Spinner, inputClass } from "../ui";
+import { OneTimeSecret, Webhooks } from "./Webhooks";
 
 /** Applications that use Clockwork through the API, and their API keys. */
 export function Integrations() {
@@ -178,6 +179,7 @@ function ApplicationCard({ app, onChange }: { app: Application; onChange: () => 
         ) : (
           <Keys appId={app.id} />
         )}
+        <Webhooks appId={app.id} />
       </div>
       <ConfirmDialog
         open={confirmDelete}
@@ -232,7 +234,7 @@ function Keys({ appId }: { appId: string }) {
   return (
     <div className="flex flex-col gap-2">
       <span className="font-mono text-[10px] uppercase tracking-wide text-fg-3">API keys</span>
-      {created && <NewKeyNotice k={created} onDismiss={() => setCreated(null)} />}
+      {created && <OneTimeSecret label={`Key ${created.name} created.`} value={created.key} onDismiss={() => setCreated(null)} />}
       {keys.status === "loading" && <Spinner label="Loading keys…" />}
       {keys.status === "error" && <ErrorState error={keys.error} onRetry={keys.reload} />}
       {keys.status === "ready" && keys.data.length === 0 && <p className="text-xs text-fg-3">No keys yet. Create one to let the application authenticate.</p>}
@@ -284,33 +286,6 @@ function Keys({ appId }: { appId: string }) {
         onConfirm={revoke}
         onCancel={() => setToRevoke(null)}
       />
-    </div>
-  );
-}
-
-/** Shows a freshly created key. It is the only time the key is visible. */
-function NewKeyNotice({ k, onDismiss }: { k: NewApiKey; onDismiss: () => void }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(k.key);
-      setCopied(true);
-    } catch {
-      /* clipboard blocked: the key is selectable */
-    }
-  }
-  return (
-    <div role="status" className="flex flex-col gap-2 rounded-md border border-ok/40 bg-ok/10 px-3 py-3">
-      <p className="text-sm">
-        Key <span className="font-medium">{k.name}</span> created. Copy it now: it will not be shown again.
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        <code className="min-w-0 flex-1 select-all break-all rounded border border-line bg-canvas px-2 py-1.5 font-mono text-xs">{k.key}</code>
-        <Button onClick={copy}>{copied ? "Copied" : "Copy"}</Button>
-        <Button variant="ghost" onClick={onDismiss}>
-          Done
-        </Button>
-      </div>
     </div>
   );
 }

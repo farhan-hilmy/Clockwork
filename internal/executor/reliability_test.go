@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/farhan-hilmy/clockwork/internal/executor"
 	"github.com/farhan-hilmy/clockwork/internal/runners"
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
+	"github.com/farhan-hilmy/clockwork/internal/webhooks"
 )
 
 // allowOverlap is a schedule that never fires during a test but sets concurrency_policy=allow.
@@ -406,5 +408,58 @@ func TestApplicationTasksCannotReachPrivateAddresses(t *testing.T) {
 	}
 	if h := history(t, e, ext.ID); h[1].Status != executions.StatusSucceeded {
 		t.Fatalf("allowed application task: %v", statuses(h))
+	}
+}
+
+// Execution state changes emit webhook events, in order, in the same transaction.
+func TestExecutionsEmitWebhookEvents(t *testing.T) {
+	e := setup(t, false)
+	hooks := webhooks.NewService(e.pool, e.clock.now)
+	ep, err := hooks.Create(t.Context(), webhooks.EndpointInput{ApplicationID: tasks.DefaultApplicationID, URL: "https://hooks.example.com/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			w.WriteHeader(503) // first attempt fails and is retried
+		}
+	}))
+	defer srv.Close()
+	tk := httpTask(t, e, "flaky", srv.URL, nil, &tasks.RetryPolicy{MaxAttempts: 2, BackoffInitialSeconds: 1, BackoffMaxSeconds: 1})
+	_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
+	runOnce(t, e)
+	e.clock.advance(time.Second)
+	runOnce(t, e)
+
+	page, err := hooks.Deliveries(t.Context(), webhooks.DeliveryParams{EndpointID: ep.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for i := len(page.Deliveries) - 1; i >= 0; i-- { // oldest first
+		got = append(got, page.Deliveries[i].EventType)
+	}
+	want := []string{webhooks.EventExecutionStarted, webhooks.EventExecutionRetrying, webhooks.EventExecutionStarted, webhooks.EventExecutionSucceeded}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("events %v, want %v", got, want)
+	}
+	// The payload is a snapshot of the execution at that moment.
+	last, err := hooks.Delivery(t.Context(), ep.ID, page.Deliveries[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ev struct {
+		Type string `json:"type"`
+		Data struct {
+			Execution executions.Execution `json:"execution"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(last.Payload.(json.RawMessage), &ev); err != nil {
+		t.Fatal(err)
+	}
+	x := ev.Data.Execution
+	if x.Status != executions.StatusSucceeded || x.Attempt != 2 || x.TaskName != "flaky" || x.DurationMS == nil {
+		t.Fatalf("payload execution: %+v", x)
 	}
 }

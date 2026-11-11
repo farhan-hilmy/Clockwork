@@ -23,6 +23,7 @@ import (
 	"github.com/farhan-hilmy/clockwork/internal/scheduler"
 	"github.com/farhan-hilmy/clockwork/internal/store"
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
+	"github.com/farhan-hilmy/clockwork/internal/webhooks"
 )
 
 // version is overridden at build time with -ldflags "-X main.version=...".
@@ -91,6 +92,14 @@ func run() error {
 	var background sync.WaitGroup
 	background.Go(func() { sched.Run(ctx) })
 	background.Go(func() { exec.Run(ctx) })
+	dispatcher := webhooks.NewDispatcher(pool, webhooks.DispatcherOptions{
+		DenyPrivate:          cfg.HTTPDenyPrivate,
+		AppsMayReachPrivate:  cfg.AppHTTPAllowPrivate,
+		DefaultApplicationID: tasks.DefaultApplicationID,
+		UserAgent:            "Clockwork-Webhooks/" + version,
+		Logger:               logger,
+	})
+	background.Go(func() { dispatcher.Run(ctx) })
 	defer func() { stop(); background.Wait() }() // stop() also covers returning on an HTTP server error
 
 	srv := &http.Server{
@@ -98,6 +107,7 @@ func run() error {
 		Handler: httpapi.NewRouter(httpapi.Deps{
 			Tasks:      taskSvc,
 			Executions: executions.NewService(executions.NewPostgresRepository(pool), nil),
+			Webhooks:   webhooks.NewService(pool, nil),
 			Apps:       apps.NewService(apps.NewPostgresRepository(pool), nil),
 			DB:         pool,
 			AdminToken: cfg.AdminToken,

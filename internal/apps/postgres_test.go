@@ -27,7 +27,7 @@ func TestPostgresApplicationsAndKeys(t *testing.T) {
 	if err := store.Migrate(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks, app_credentials; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
+	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks, app_credentials, webhook_endpoints CASCADE; DELETE FROM applications WHERE id <> 'app_clockwork'`); err != nil {
 		t.Fatal(err)
 	}
 
