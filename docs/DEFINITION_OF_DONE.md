@@ -49,4 +49,6 @@ The check takes about 90 seconds, most of it waiting for a scheduled run. It pri
 - **Shutdown:** `docker compose stop` (SIGTERM) shut down cleanly in 5 s with exit code 0.
 - **Go tests:** all pass with `-race` against Postgres. Statement coverage of `internal/` is 87.0%.
 - **UI tests:** all 25 pass, and the typecheck and build pass.
-- **CI:** the workflow was added in this commit. Its first GitHub Actions run is the remaining evidence for point 16.
+- **CI:** the first GitHub Actions run, on commit `80c3c46`, passed all three jobs: Go (gofmt, vet, `-race` tests against Postgres, the coverage gate), web UI, and Docker image (runs as non-root). See https://github.com/farhan-hilmy/Clockwork/actions/runs/43360357029.
+
+All 16 points pass.
