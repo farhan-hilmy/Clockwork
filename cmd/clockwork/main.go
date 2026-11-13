@@ -100,7 +100,11 @@ func run() error {
 		Logger:               logger,
 	})
 	background.Go(func() { dispatcher.Run(ctx) })
-	defer func() { stop(); background.Wait() }() // stop() also covers returning on an HTTP server error
+	defer func() {
+		stop() // also covers returning on an HTTP server error
+		background.Wait()
+		logger.Info("stopped")
+	}()
 
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
@@ -142,7 +146,6 @@ func run() error {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("graceful shutdown: %w", err)
 	}
-	logger.Info("stopped")
 	return nil
 }
 

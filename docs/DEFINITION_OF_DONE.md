@@ -10,7 +10,7 @@ Each point is checked in one or more of three ways:
 
 | # | Point | Passes when | Checked by |
 |---|---|---|---|
-| 1 | **Clean install** | From a fresh clone, copy `.env.example` to `.env`, set the token, and run `docker compose up -d --build`. The UI answers on port 8080 and `/readyz` is ok within 2 minutes. The server runs as a non-root user. | Acceptance (readiness, UI, user), CI (image builds) |
+| 1 | **Clean install** | From a fresh clone, copy `.env.example` to `.env`, set the token, and run `docker compose up -d --build`. Once the containers start, the UI answers on port 8080 and `/readyz` is ok within 2 minutes. The first image build is not counted: it depends on the network and caches. The server runs as a non-root user. | Acceptance (readiness, UI, user), CI (image builds) |
 | 2 | **Fails fast on bad config** | A missing or invalid setting stops startup with a message naming it. | Tests: `TestLoadRequiresDatabaseAndStrongToken`, `TestLoadRejectsBadValues`, `TestAppPrivateAccessCannotContradictGlobalDeny` |
 | 3 | **Tasks in UI and API** | An HTTP task can be created, edited, paused, resumed and deleted. Validation errors are reported per field. Secrets are masked in responses. | Acceptance, tests: `TestTaskLifecycleOverHTTP`, `TestValidationErrorsAre422WithFieldDetails`, `TestCreateRedactsSecretsButStoresThem` |
 | 4 | **Schedules** | Cron with timezone and daylight saving works as documented. The next run time in the API matches the cron. | Acceptance, tests: `internal/schedule`, `TestPlanDue` |
@@ -38,3 +38,15 @@ CLOCKWORK_URL=http://localhost:8080 CLOCKWORK_ADMIN_TOKEN=... go run ./scripts/a
 ```
 
 The check takes about 90 seconds, most of it waiting for a scheduled run. It prints one line per point and exits non-zero if any fails. It creates applications and tasks whose names start with `acceptance-`, and removes them at the end.
+
+## Results
+
+**2026-11-13**, commit `90ba5a8` plus a shutdown-log fix, on Windows 11 with Docker Desktop:
+
+- **Clean install** from a fresh clone. `docker compose up -d --build` took 149 s, nearly all of it the first image build. `/readyz` was ok 3 s after the containers started.
+- **Acceptance check:** 10 of 10 live points passed (1, 2, 3, 4, 5, 7, 12, 13, 14, 15). The check removed everything it created.
+- **Example integration** ran successfully against the fresh install.
+- **Shutdown:** `docker compose stop` (SIGTERM) shut down cleanly in 5 s with exit code 0.
+- **Go tests:** all pass with `-race` against Postgres. Statement coverage of `internal/` is 87.0%.
+- **UI tests:** all 25 pass, and the typecheck and build pass.
+- **CI:** the workflow was added in this commit. Its first GitHub Actions run is the remaining evidence for point 16.
