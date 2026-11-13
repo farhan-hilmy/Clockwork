@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/farhan-hilmy/clockwork/internal/executions"
 	"github.com/farhan-hilmy/clockwork/internal/store"
@@ -145,5 +147,90 @@ func TestPostgresIdempotencyAndApplicationFilter(t *testing.T) {
 	page, _ := svc.List(ctx, executions.ListParams{ApplicationID: "app_b"})
 	if len(page.Executions) != 1 || page.Executions[0].TaskID != b1.ID {
 		t.Fatalf("application filter: %+v", page.Executions)
+	}
+}
+
+func TestExecutionFilters(t *testing.T) {
+	url := os.Getenv("CLOCKWORK_TEST_DATABASE_URL")
+	if url == "" {
+		t.Skip("CLOCKWORK_TEST_DATABASE_URL not set; skipping Postgres integration test")
+	}
+	ctx := context.Background()
+	pool, err := store.Open(ctx, url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if err := store.Migrate(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `TRUNCATE executions, tasks, webhook_endpoints CASCADE; DELETE FROM applications WHERE id <> 'app_clockwork';
+		INSERT INTO applications (id, name) VALUES ('app_a', 'a')`); err != nil {
+		t.Fatal(err)
+	}
+	taskSvc := tasks.NewService(tasks.NewPostgresRepository(pool), tasks.Options{})
+	mk := func(app string) string {
+		tk, err := taskSvc.Create(ctx, tasks.CreateInput{ApplicationID: app, Name: "t-" + app,
+			Runner: tasks.Runner{Type: tasks.RunnerHTTP, Config: json.RawMessage(`{"url":"https://example.com"}`)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return tk.ID
+	}
+	own, other := mk("app_clockwork"), mk("app_a")
+	now := time.Date(2026, 11, 12, 12, 0, 0, 0, time.UTC)
+	insert := func(id, task, app, status string, ago time.Duration, ms int) {
+		if _, err := pool.Exec(ctx, `INSERT INTO executions (id, task_id, application_id, trigger, status, created_at, run_after, duration_ms)
+			VALUES ($1, $2, $3, 'manual', $4, $5, $5, $6)`, id, task, app, status, now.Add(-ago), ms); err != nil {
+			t.Fatal(err)
+		}
+	}
+	insert("exe_01", own, "app_clockwork", "succeeded", 48*time.Hour, 100) // outside a 24h window
+	insert("exe_02", own, "app_clockwork", "succeeded", 2*time.Hour, 100)
+	insert("exe_03", own, "app_clockwork", "succeeded", time.Hour, 300)
+	insert("exe_04", own, "app_clockwork", "failed", 30*time.Minute, 500)
+	insert("exe_05", own, "app_clockwork", "retrying", 20*time.Minute, 900) // not a final outcome
+	insert("exe_06", other, "app_a", "failed", 10*time.Minute, 50)
+
+	svc := executions.NewService(executions.NewPostgresRepository(pool), func() time.Time { return now })
+	ids := func(p executions.ListParams) []string {
+		page, err := svc.List(ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out []string
+		for _, e := range page.Executions {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+	since, until := now.Add(-90*time.Minute), now.Add(-25*time.Minute)
+	if got := fmt.Sprint(ids(executions.ListParams{Since: &since, Until: &until})); got != "[exe_04 exe_03]" {
+		t.Fatalf("time range: %s", got)
+	}
+	if got := fmt.Sprint(ids(executions.ListParams{ApplicationID: "app_a"})); got != "[exe_06]" {
+		t.Fatalf("application: %s", got)
+	}
+	if got := fmt.Sprint(ids(executions.ListParams{Status: "succeeded", Since: &since})); got != "[exe_03]" {
+		t.Fatalf("status and since: %s", got)
+	}
+
+	st, err := svc.Stats(ctx, "app_clockwork", 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Last 24h for app_clockwork: 2 succeeded, 1 failed, 1 retrying.
+	if st.Total != 4 || st.ByStatus["succeeded"] != 2 || st.ByStatus["failed"] != 1 || st.ByStatus["retrying"] != 1 ||
+		st.SuccessRate == nil || fmt.Sprintf("%.3f", *st.SuccessRate) != "0.667" ||
+		*st.AvgDurationMS != 300 || *st.P95DurationMS != 480 {
+		t.Fatalf("stats: %+v rate=%v avg=%v p95=%v", st, *st.SuccessRate, *st.AvgDurationMS, *st.P95DurationMS)
+	}
+	all, _ := svc.Stats(ctx, "", 24*time.Hour)
+	if all.Total != 5 {
+		t.Fatalf("all applications: %+v", all)
+	}
+	empty, _ := svc.Stats(ctx, "app_clockwork", time.Minute)
+	if empty.Total != 0 || empty.SuccessRate != nil || empty.AvgDurationMS != nil {
+		t.Fatalf("empty window: %+v", empty)
 	}
 }

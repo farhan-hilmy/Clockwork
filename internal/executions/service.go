@@ -17,6 +17,13 @@ type Repository interface {
 	// it inserts nothing and returns the earlier execution with replayed=true, or
 	// ErrIdempotencyConflict if that execution belongs to another task.
 	Enqueue(ctx context.Context, e Execution) (exe Execution, replayed bool, err error)
+	// Stats summarises executions created since the given time. appID "" covers every application.
+	Stats(ctx context.Context, appID string, since time.Time) (Stats, error)
+}
+
+// Stats summarises the executions created during the last window.
+func (s *Service) Stats(ctx context.Context, appID string, window time.Duration) (Stats, error) {
+	return s.repo.Stats(ctx, appID, s.now().Add(-window))
 }
 
 // Service reads execution history and enqueues manual runs.

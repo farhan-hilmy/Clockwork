@@ -4,7 +4,7 @@ Transcend Beyond the Clock.
 
 Clockwork is a lightweight, self-hosted automation and task scheduling platform for developers. Define an automation once, schedule it, and let Clockwork run it reliably, whether the task belongs to Clockwork itself or to an external application.
 
-> **Status: Milestone 6 (Webhooks).** Create HTTP and shell tasks with cron schedules through the UI and API. Clockwork runs them on schedule or on demand, retries failures with backoff, recovers runs from crashed workers, and records every attempt. Other services integrate as **applications** with their own API keys, isolated from each other, and can receive **signed webhooks** when their runs start, succeed or fail. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design and the full roadmap.
+> **Status: MVP complete (milestone 7).** All 16 points of the [definition of done](docs/DEFINITION_OF_DONE.md) pass. Clockwork runs HTTP and shell tasks on cron schedules or on demand, retries failures, survives crashes, and records every attempt. Other services integrate as **applications** with their own API keys, isolated from each other, and receive **signed webhooks**. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the design. Clockwork has not had an external security review: read [Security](#security) before exposing it.
 
 ## Quick start (Docker Compose)
 
@@ -18,7 +18,22 @@ docker compose up -d --build
 
 Open <http://localhost:8080> and sign in with your admin token.
 
-Task definitions live in the `pgdata` volume, so they survive restarts and `docker compose down`. Only `docker compose down -v` deletes them.
+Task definitions and history live in the `pgdata` volume, so they survive restarts and `docker compose down`. Only `docker compose down -v` deletes them.
+
+To check an install end to end, run the [acceptance check](docs/DEFINITION_OF_DONE.md#running-the-acceptance-check) (needs Go): `CLOCKWORK_ADMIN_TOKEN=... go run ./scripts/acceptance`.
+
+### Upgrading
+
+Pull the new version and run `docker compose up -d --build`. Database migrations run automatically at startup, inside a lock, so several instances starting together are safe. Back up the database first. All migrations so far only add tables and columns:
+
+| Migration | Adds |
+|---|---|
+| `00001_init` | applications, tasks, executions |
+| `00002_execution_run_after` | `executions.run_after`, for retry backoff |
+| `00003_app_credentials` | application API keys |
+| `00004_webhooks` | webhook endpoints and the delivery outbox |
+
+The tables grow without limit: there is no automatic retention of execution history or webhook deliveries yet. Delete old rows yourself if needed, for example `DELETE FROM executions WHERE created_at < now() - interval '90 days'`.
 
 ## Configuration
 
@@ -54,14 +69,15 @@ The full API is described by `GET /api/v1/openapi.json` (OpenAPI 3.1, no authent
 | `GET /healthz` | Liveness. No auth. |
 | `GET /readyz` | Readiness, including the database. No auth. |
 | `GET /api/v1/meta` | Server version, available runners, and who the caller is (`principal`). |
-| `GET /api/v1/tasks?limit=&cursor=&q=&enabled=&application_id=` | List tasks, newest first. |
+| `GET /api/v1/tasks?limit=&cursor=&q=&enabled=&runner=&application_id=` | List tasks, newest first. |
 | `POST /api/v1/tasks` | Create a task. |
 | `GET /api/v1/tasks/{id}` | Get one task. |
 | `PATCH /api/v1/tasks/{id}` | Partial update. Send `"schedule": null` to remove the schedule. |
 | `POST /api/v1/tasks/{id}/enable` and `/disable` | Resume or pause a task. |
 | `DELETE /api/v1/tasks/{id}` | Delete a task and its history. |
 | `POST /api/v1/tasks/{id}/run` | Queue a run now (`202`), even if the task is paused or unscheduled. |
-| `GET /api/v1/executions?task_id=&status=&limit=&cursor=` | List executions, newest first. |
+| `GET /api/v1/executions?task_id=&status=&application_id=&since=&until=&limit=&cursor=` | List executions, newest first. `since` and `until` are RFC 3339 times. |
+| `GET /api/v1/stats?window=24h` | Runs by status, success rate, and average and p95 duration over `1h`, `24h`, `7d` or `30d`. |
 | `GET /api/v1/executions/{id}` | Get one execution. |
 | `GET`, `POST /api/v1/applications` | List or register applications. Admin only. |
 | `GET`, `PATCH`, `DELETE /api/v1/applications/{id}` | Get, rename, describe, enable/disable or delete an application. Admin only. |
@@ -197,6 +213,8 @@ CLOCKWORK_TEST_DATABASE_URL="postgres://postgres:dev@localhost:5432/clockwork_te
 
 cd web && npm test && npm run build # UI unit tests, typecheck, production build
 ```
+
+CI runs all of this on every push (`.github/workflows/ci.yml`), with the race detector, against Postgres. It fails if statement coverage of `internal/` drops below 70%.
 
 The race detector needs cgo. On a machine without a C toolchain, run the suite in a Linux container against the same Postgres:
 

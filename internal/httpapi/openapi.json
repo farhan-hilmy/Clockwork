@@ -111,6 +111,13 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "runner",
+            "in": "query",
+            "schema": {
+              "$ref": "#/components/schemas/RunnerType"
+            }
           }
         ],
         "responses": {
@@ -443,6 +450,32 @@
             "in": "query",
             "schema": {
               "$ref": "#/components/schemas/ExecutionStatus"
+            }
+          },
+          {
+            "name": "application_id",
+            "in": "query",
+            "description": "Admin only: filter by application",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "Created at or after (RFC 3339)",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "until",
+            "in": "query",
+            "description": "Created before (RFC 3339)",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
             }
           }
         ],
@@ -1256,6 +1289,98 @@
           },
           "404": {
             "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/stats": {
+      "get": {
+        "tags": [
+          "executions"
+        ],
+        "summary": "Summary of recent executions",
+        "description": "For an application, only its own executions. `success_rate` is succeeded / (succeeded + failed); durations cover finished attempts.",
+        "parameters": [
+          {
+            "name": "window",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1h",
+                "24h",
+                "7d",
+                "30d"
+              ],
+              "default": "24h"
+            }
+          },
+          {
+            "name": "application_id",
+            "in": "query",
+            "description": "Admin only: one application",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "window": {
+                      "type": "string"
+                    },
+                    "executions": {
+                      "type": "object",
+                      "properties": {
+                        "since": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "total": {
+                          "type": "integer"
+                        },
+                        "by_status": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "integer"
+                          }
+                        },
+                        "success_rate": {
+                          "type": [
+                            "number",
+                            "null"
+                          ]
+                        },
+                        "avg_duration_ms": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "p95_duration_ms": {
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }

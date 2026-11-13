@@ -39,6 +39,14 @@ func (h *taskHandlers) list(w http.ResponseWriter, r *http.Request) {
 		}
 		p.Limit = n
 	}
+	switch rt := tasks.RunnerType(q.Get("runner")); rt {
+	case "":
+	case tasks.RunnerHTTP, tasks.RunnerShell:
+		p.RunnerType = rt
+	default:
+		writeError(w, http.StatusBadRequest, "invalid_parameter", "runner must be http or shell", nil)
+		return
+	}
 	if v := q.Get("enabled"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {

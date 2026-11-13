@@ -40,3 +40,13 @@ export function runnerSummary(type: string, config: Record<string, unknown>): st
   if (type === "shell") return String(config.command ?? "").split("\n")[0] ?? "";
   return type;
 }
+
+/** Formats milliseconds compactly: 840 ms, 2.4 s, 3m 05s, 1h 02m. */
+export function formatDuration(ms: number | null | undefined): string {
+  if (ms == null) return "—";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)} s`;
+  const s = Math.round(ms / 1000);
+  if (s < 3600) return `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
+  return `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`;
+}

@@ -114,6 +114,9 @@ func (r *PostgresRepository) List(ctx context.Context, p ListParams) ([]Task, er
 	if p.Enabled != nil {
 		where = append(where, "enabled = "+arg(*p.Enabled))
 	}
+	if p.RunnerType != "" {
+		where = append(where, "runner_type = "+arg(string(p.RunnerType)))
+	}
 	if q := strings.TrimSpace(p.Query); q != "" {
 		// Escape LIKE wildcards so the query is a literal substring match.
 		q = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(q)

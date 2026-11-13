@@ -155,6 +155,18 @@ export interface Execution {
   duration_ms: number | null;
 }
 
+export type StatsWindow = "1h" | "24h" | "7d" | "30d";
+
+export interface ExecutionStats {
+  since: string;
+  total: number;
+  by_status: Partial<Record<ExecutionStatus, number>>;
+  /** succeeded / (succeeded + failed); null when neither happened. */
+  success_rate: number | null;
+  avg_duration_ms: number | null;
+  p95_duration_ms: number | null;
+}
+
 /** executions.error: why an attempt failed, and when the next attempt runs if it was retried. */
 export interface ExecutionError {
   kind: string;
@@ -281,7 +293,7 @@ export const api = {
     request<WebhookDelivery>("POST", `/webhooks/${encodeURIComponent(id)}/deliveries/${encodeURIComponent(deliveryId)}/redeliver`),
   revokeKey: (appId: string, keyId: string) =>
     request<void>("DELETE", `/applications/${encodeURIComponent(appId)}/keys/${encodeURIComponent(keyId)}`),
-  listTasks: (params: { q?: string; enabled?: boolean; application_id?: string; cursor?: string; limit?: number } = {}) =>
+  listTasks: (params: { q?: string; enabled?: boolean; application_id?: string; runner?: RunnerType | ""; cursor?: string; limit?: number } = {}) =>
     request<TaskPage>("GET", `/tasks${query(params)}`),
   getTask: (id: string) => request<Task>("GET", `/tasks/${encodeURIComponent(id)}`),
   createTask: (input: TaskInput) => request<Task>("POST", "/tasks", input),
@@ -291,6 +303,8 @@ export const api = {
   deleteTask: (id: string) => request<void>("DELETE", `/tasks/${encodeURIComponent(id)}`),
   /** Queues an immediate run of a task. */
   runTask: (id: string) => request<Execution>("POST", `/tasks/${encodeURIComponent(id)}/run`),
-  listExecutions: (params: { task_id?: string; status?: ExecutionStatus | ""; cursor?: string; limit?: number } = {}) =>
-    request<ExecutionPage>("GET", `/executions${query(params)}`),
+  listExecutions: (
+    params: { task_id?: string; status?: ExecutionStatus | ""; application_id?: string; since?: string; until?: string; cursor?: string; limit?: number } = {},
+  ) => request<ExecutionPage>("GET", `/executions${query(params)}`),
+  stats: (window: StatsWindow = "24h") => request<{ window: StatsWindow; executions: ExecutionStats }>("GET", `/stats?window=${window}`),
 };

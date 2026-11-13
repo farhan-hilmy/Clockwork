@@ -96,6 +96,7 @@ func NewRouter(d Deps) http.Handler {
 			api.Post("/tasks/{id}/run", eh.run)
 			api.Get("/executions", eh.list)
 			api.Get("/executions/{id}", eh.get)
+			api.Get("/stats", eh.stats)
 			api.Get("/webhooks", wh.list)
 			api.Post("/webhooks", wh.create)
 			api.Get("/webhooks/{id}", wh.get)

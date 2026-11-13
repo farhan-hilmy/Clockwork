@@ -72,7 +72,7 @@ func (m *MemoryRepository) List(_ context.Context, p ListParams) ([]Task, error)
 		if p.ApplicationID != "" && t.ApplicationID != p.ApplicationID {
 			continue
 		}
-		if p.Enabled != nil && t.Enabled != *p.Enabled {
+		if (p.Enabled != nil && t.Enabled != *p.Enabled) || (p.RunnerType != "" && t.Runner.Type != p.RunnerType) {
 			continue
 		}
 		if p.Query != "" && !strings.Contains(strings.ToLower(t.Name), strings.ToLower(p.Query)) {

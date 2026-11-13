@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, executionStatuses, type Execution, type ExecutionStatus } from "../api";
+import { useAsync } from "../hooks";
 import { formatDateTime, relativeTime } from "../format";
 import { Badge, Button, Card, EmptyState, ErrorState, PageHeader, Spinner, inputClass } from "../ui";
 import { ExecutionDetail } from "./ExecutionDetail";
@@ -16,6 +17,20 @@ const statusTone: Record<ExecutionStatus, "ok" | "danger" | "info" | "warn" | "n
   skipped: "neutral",
 };
 
+type Range = "" | "1h" | "24h" | "7d";
+const ranges: [Range, string][] = [
+  ["", "Any time"],
+  ["1h", "Last hour"],
+  ["24h", "Last 24 hours"],
+  ["7d", "Last 7 days"],
+];
+const rangeMs: Record<Exclude<Range, "">, number> = { "1h": 3_600_000, "24h": 86_400_000, "7d": 604_800_000 };
+
+/** The RFC 3339 start of a range, or undefined for any time. Exported for tests. */
+export function sinceFor(range: Range, now: number = Date.now()): string | undefined {
+  return range === "" ? undefined : new Date(now - rangeMs[range]).toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
 /** How often the list refreshes itself while the page is open. */
 const REFRESH_MS = 10_000;
 
@@ -23,6 +38,11 @@ export function Executions() {
   const [params, setParams] = useSearchParams();
   const taskId = params.get("task_id") ?? "";
   const status = (params.get("status") ?? "") as ExecutionStatus | "";
+  const appId = params.get("application_id") ?? "";
+  const range = (params.get("range") ?? "") as Range;
+  const apps = useAsync(() => api.applications(), []);
+  // The time window is fixed when the filters change, so paging stays consistent.
+  const filters = { task_id: taskId, status, application_id: appId, since: sinceFor(range) };
   const [items, setItems] = useState<Execution[]>([]);
   const [cursor, setCursor] = useState<string | undefined>();
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -36,14 +56,14 @@ export function Executions() {
   useEffect(() => {
     setItems([]);
     setState("loading");
-  }, [taskId, status]);
+  }, [taskId, status, appId, range]);
 
   // Loads the first page; refreshes it periodically so new scheduled runs appear.
   useEffect(() => {
     let cancelled = false;
     extended.current = false;
     const load = () =>
-      api.listExecutions({ task_id: taskId, status, limit: 50 }).then(
+      api.listExecutions({ ...filters, limit: 50 }).then(
         (p) => {
           if (cancelled) return;
           setItems(p.executions);
@@ -62,13 +82,14 @@ export function Executions() {
       cancelled = true;
       clearInterval(timer);
     };
-  }, [taskId, status, nonce]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId, status, appId, range, nonce]);
 
   async function loadMore() {
     if (!cursor) return;
     setMoreError("");
     try {
-      const p = await api.listExecutions({ task_id: taskId, status, cursor, limit: 50 });
+      const p = await api.listExecutions({ ...filters, cursor, limit: 50 });
       extended.current = true;
       setItems((xs) => [...xs, ...p.executions]);
       setCursor(p.next_cursor);
@@ -77,7 +98,7 @@ export function Executions() {
     }
   }
 
-  function setFilter(key: "task_id" | "status", value: string) {
+  function setFilter(key: "task_id" | "status" | "application_id" | "range", value: string) {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
     else next.delete(key);
@@ -85,7 +106,7 @@ export function Executions() {
   }
 
   const taskName = taskId && items[0]?.task_id === taskId ? items[0].task_name : taskId;
-  const filtering = taskId !== "" || status !== "";
+  const filtering = taskId !== "" || status !== "" || appId !== "" || range !== "";
 
   return (
     <>
@@ -117,6 +138,33 @@ export function Executions() {
             </option>
           ))}
         </select>
+        <select
+          aria-label="Filter by time"
+          className={`${inputClass} max-w-[180px] bg-surface`}
+          value={range}
+          onChange={(e) => setFilter("range", e.target.value)}
+        >
+          {ranges.map(([value, label]) => (
+            <option key={value} value={value}>
+              {label}
+            </option>
+          ))}
+        </select>
+        {apps.status === "ready" && apps.data.length > 1 && (
+          <select
+            aria-label="Filter by application"
+            className={`${inputClass} max-w-[220px] bg-surface`}
+            value={appId}
+            onChange={(e) => setFilter("application_id", e.target.value)}
+          >
+            <option value="">All applications</option>
+            {apps.data.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}
+              </option>
+            ))}
+          </select>
+        )}
         {taskId && (
           <Button variant="ghost" onClick={() => setFilter("task_id", "")}>
             Show all tasks ×

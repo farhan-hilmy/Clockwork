@@ -1,11 +1,15 @@
 package executor_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -463,3 +467,67 @@ func TestExecutionsEmitWebhookEvents(t *testing.T) {
 		t.Fatalf("payload execution: %+v", x)
 	}
 }
+
+// Secrets in task configuration never reach the logs, whatever way a run fails.
+func TestSecretsStayOutOfLogs(t *testing.T) {
+	e := setup(t, true)
+	var logs syncBuffer
+	logger := slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	pool := executor.New(e.pool, executor.Options{Now: e.clock.now, Logger: logger,
+		Runners: map[tasks.RunnerType]runners.Runner{tasks.RunnerHTTP: runners.NewHTTP(runners.HTTPOptions{}), tasks.RunnerShell: &runners.Shell{}}})
+
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(500) }))
+	defer failing.Close()
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close() // connection refused
+
+	const secret = "s3cr3t-value-that-must-not-leak"
+	configs := map[string]string{
+		"500":     `{"url":"` + failing.URL + `/x?token=` + secret + `","headers":{"Authorization":"Bearer ` + secret + `"}}`,
+		"refused": `{"url":"` + gone.URL + `/x?api_key=` + secret + `","headers":{"X-Api-Key":"` + secret + `"}}`,
+	}
+	for name, cfg := range configs {
+		tk, err := e.tasks.Create(t.Context(), tasks.CreateInput{Name: "leak-" + name, Runner: tasks.Runner{Type: tasks.RunnerHTTP, Config: json.RawMessage(cfg)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
+	}
+	if _, err := exec.LookPath("sh"); err == nil {
+		tk, err := e.tasks.Create(t.Context(), tasks.CreateInput{Name: "leak-shell",
+			Runner: tasks.Runner{Type: tasks.RunnerShell, Config: json.RawMessage(`{"command":"exit 3","env":{"API_TOKEN":"` + secret + `"}}`)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _, _ = e.execs.RunNow(t.Context(), tk.ID, "")
+	}
+	for {
+		ran, err := pool.RunOnce(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ran {
+			break
+		}
+	}
+	out := logs.String()
+	if !strings.Contains(out, "execution failed") {
+		t.Fatalf("expected failure logs, got:\n%s", out)
+	}
+	if strings.Contains(out, secret) {
+		t.Fatalf("secret leaked into logs:\n%s", out)
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for concurrent log writes.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+func (s *syncBuffer) String() string { s.mu.Lock(); defer s.mu.Unlock(); return s.b.String() }

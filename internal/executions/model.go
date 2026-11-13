@@ -64,8 +64,21 @@ type ListParams struct {
 	ApplicationID string // restrict to one application's executions
 	TaskID        string
 	Status        string
+	Since, Until  *time.Time // created_at range: Since inclusive, Until exclusive
 	Limit         int
 	Cursor        string // return executions with id < Cursor
+}
+
+// Stats summarises executions created in a time window.
+type Stats struct {
+	Since    time.Time      `json:"since"`
+	Total    int            `json:"total"`
+	ByStatus map[string]int `json:"by_status"`
+	// SuccessRate is succeeded / (succeeded + failed), or null when neither happened.
+	// Retried and interrupted attempts are not counted: their final attempt is.
+	SuccessRate   *float64 `json:"success_rate"`
+	AvgDurationMS *int64   `json:"avg_duration_ms"`
+	P95DurationMS *int64   `json:"p95_duration_ms"`
 }
 
 // Page is one page of executions.

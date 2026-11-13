@@ -1,35 +1,25 @@
 import { Link } from "react-router-dom";
-import { api, type Application, type Task } from "../api";
+import { api, type Application, type Execution, type ExecutionStats, type Task } from "../api";
 import { useAsync } from "../hooks";
-import { formatDateTime, relativeTime } from "../format";
+import { formatDateTime, formatDuration, relativeTime } from "../format";
 import { Button, Card, EmptyState, ErrorState, PageHeader, Spinner } from "../ui";
 
 interface DashboardData {
   tasks: Task[];
   truncated: boolean;
   apps: Application[];
-  failures24h: number;
-  failuresTruncated: boolean;
+  stats: ExecutionStats;
+  failures: Execution[];
 }
 
-const DAY_MS = 86_400_000;
-
 async function load(): Promise<DashboardData> {
-  const [page, apps, failed] = await Promise.all([
+  const [page, apps, stats, failed] = await Promise.all([
     api.listTasks({ limit: 200 }),
     api.applications(),
-    api.listExecutions({ status: "failed", limit: 200 }),
+    api.stats("24h"),
+    api.listExecutions({ status: "failed", limit: 5 }),
   ]);
-  const since = Date.now() - DAY_MS;
-  // Newest first, so every recent failure is in this page unless all 200 are recent.
-  const recent = failed.executions.filter((e) => new Date(e.finished_at ?? e.created_at).getTime() >= since);
-  return {
-    tasks: page.tasks,
-    truncated: !!page.next_cursor,
-    apps,
-    failures24h: recent.length,
-    failuresTruncated: recent.length === failed.executions.length && !!failed.next_cursor,
-  };
+  return { tasks: page.tasks, truncated: !!page.next_cursor, apps, stats: stats.executions, failures: failed.executions };
 }
 
 function Stat({ label, value, meta }: { label: string; value: string | number; meta: string }) {
@@ -64,7 +54,8 @@ export function Dashboard() {
 }
 
 function Body({ data }: { data: DashboardData }) {
-  const { tasks, apps, truncated, failures24h, failuresTruncated } = data;
+  const { tasks, apps, truncated, stats, failures } = data;
+  const failed24h = stats.by_status.failed ?? 0;
   const enabled = tasks.filter((t) => t.enabled);
   const scheduled = enabled.filter((t) => t.schedule);
   const paused = tasks.filter((t) => !t.enabled && t.schedule);
@@ -76,17 +67,19 @@ function Body({ data }: { data: DashboardData }) {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Total tasks" value={`${tasks.length}${plus}`} meta={`${enabled.length} enabled · ${tasks.length - enabled.length} disabled`} />
-        <Stat label="Active schedules" value={scheduled.length} meta={`${paused.length} paused`} />
-        <Stat label="Applications" value={apps.length} meta={`${apps.filter((a) => a.task_count > 0).length} with tasks`} />
+      <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <Stat label="Runs · 24h" value={stats.total} meta={`${stats.by_status.succeeded ?? 0} succeeded · ${stats.by_status.queued ?? 0} queued`} />
+        <Stat
+          label="Success rate · 24h"
+          value={stats.success_rate == null ? "—" : `${Math.round(stats.success_rate * 100)}%`}
+          meta={stats.success_rate == null ? "no finished runs yet" : "of finished runs"}
+        />
         <Link to="/executions?status=failed" className="contents">
-          <Stat
-            label="Failures · 24h"
-            value={`${failures24h}${failuresTruncated ? "+" : ""}`}
-            meta={failures24h === 0 ? "no failed runs" : "view failed runs →"}
-          />
+          <Stat label="Failures · 24h" value={failed24h} meta={failed24h === 0 ? "no failed runs" : "view failed runs →"} />
         </Link>
+        <Stat label="Typical duration" value={formatDuration(stats.avg_duration_ms)} meta={`p95 ${formatDuration(stats.p95_duration_ms)}`} />
+        <Stat label="Tasks" value={`${tasks.length}${plus}`} meta={`${scheduled.length} scheduled · ${paused.length} paused`} />
+        <Stat label="Applications" value={apps.length} meta={`${apps.filter((a) => a.task_count > 0).length} with tasks`} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
@@ -121,6 +114,28 @@ function Body({ data }: { data: DashboardData }) {
           )}
         </Card>
 
+        <div className="flex flex-col gap-4">
+        <Card title="Recent failures" actions={<Link to="/executions?status=failed" className="text-xs text-fg-3 hover:underline">all →</Link>}>
+          {failures.length === 0 ? (
+            <p className="border-t border-line px-4 py-6 text-center text-[13px] text-fg-3">No failed runs.</p>
+          ) : (
+            <ul>
+              {failures.map((e) => (
+                <li key={e.id} className="flex items-center gap-3 border-t border-line px-4 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <Link to={`/executions?task_id=${encodeURIComponent(e.task_id)}`} className="block truncate text-[13px] font-medium hover:underline">
+                      {e.task_name}
+                    </Link>
+                    <span className="block truncate font-mono text-[11px] text-danger">{failureReason(e)}</span>
+                  </div>
+                  <span className="shrink-0 font-mono text-xs text-fg-3" title={e.finished_at ?? e.created_at}>
+                    {relativeTime(e.finished_at ?? e.created_at)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
         <Card title="Tasks by application">
           <ul>
             {apps.map((a) => (
@@ -138,7 +153,13 @@ function Body({ data }: { data: DashboardData }) {
             ))}
           </ul>
         </Card>
+        </div>
       </div>
     </>
   );
+}
+
+function failureReason(e: Execution): string {
+  const err = e.error as { kind?: string; message?: string } | null;
+  return err?.message ? `${err.kind}: ${err.message}` : "failed";
 }

@@ -342,3 +342,45 @@ func TestOpenAPIMatchesRouter(t *testing.T) {
 		t.Fatalf("only %d routes found; walk is broken", len(routed))
 	}
 }
+
+func TestStatsAndFiltersOverHTTP(t *testing.T) {
+	env := newTestEnv(t, fakePinger{}, "", false)
+	_, keyA := newApp(t, env, "app-a")
+	_, keyB := newApp(t, env, "app-b")
+	_, ta, _ := req(t, env.srv, "POST", "/api/v1/tasks", appTask, keyA, nil)
+	req(t, env.srv, "POST", "/api/v1/tasks/"+ta["id"].(string)+"/run", "", keyA, nil)
+
+	// Stats are scoped like everything else.
+	for key, want := range map[string]float64{keyA: 1, keyB: 0, token: 1} {
+		code, st, _ := req(t, env.srv, "GET", "/api/v1/stats", "", key, nil)
+		if code != 200 || st["window"] != "24h" || st["executions"].(map[string]any)["total"] != want {
+			t.Errorf("stats = %d %v, want total %v", code, st, want)
+		}
+	}
+	if code, _, _ := req(t, env.srv, "GET", "/api/v1/stats?window=2y", "", token, nil); code != 400 {
+		t.Errorf("bad window = %d", code)
+	}
+
+	// Time-range filters on executions.
+	future := "2999-01-01T00:00:00Z"
+	if _, l, _ := req(t, env.srv, "GET", "/api/v1/executions?since="+future, "", token, nil); len(l["executions"].([]any)) != 0 {
+		t.Errorf("since in the future: %v", l)
+	}
+	if _, l, _ := req(t, env.srv, "GET", "/api/v1/executions?until="+future, "", token, nil); len(l["executions"].([]any)) != 1 {
+		t.Errorf("until in the future: %v", l)
+	}
+	if code, _, _ := req(t, env.srv, "GET", "/api/v1/executions?since=yesterday", "", token, nil); code != 400 {
+		t.Errorf("bad since = %d", code)
+	}
+
+	// Runner filter on tasks.
+	if _, l, _ := req(t, env.srv, "GET", "/api/v1/tasks?runner=shell", "", token, nil); len(l["tasks"].([]any)) != 0 {
+		t.Errorf("runner=shell: %v", l)
+	}
+	if _, l, _ := req(t, env.srv, "GET", "/api/v1/tasks?runner=http", "", token, nil); len(l["tasks"].([]any)) != 1 {
+		t.Errorf("runner=http: %v", l)
+	}
+	if code, _, _ := req(t, env.srv, "GET", "/api/v1/tasks?runner=ftp", "", token, nil); code != 400 {
+		t.Errorf("bad runner = %d", code)
+	}
+}

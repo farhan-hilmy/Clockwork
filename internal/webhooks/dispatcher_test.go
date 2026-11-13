@@ -361,3 +361,32 @@ func TestCrashedDispatcherClaimIsRetriedAfterLease(t *testing.T) {
 		t.Fatalf("after lease: %+v (receiver calls %d)", d, count.Load())
 	}
 }
+
+func TestDispatcherRunDeliversAndStops(t *testing.T) {
+	e := setup(t)
+	got := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { got <- r.Header.Get(webhooks.HeaderEvent) }))
+	defer srv.Close()
+	e.endpoint(t, "app_clockwork", srv.URL)
+	e.emit(t, "app_clockwork", webhooks.EventExecutionStarted)
+
+	d := webhooks.NewDispatcher(e.pool, webhooks.DispatcherOptions{PollInterval: 20 * time.Millisecond, DefaultApplicationID: "app_clockwork",
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { d.Run(ctx); close(done) }()
+	select {
+	case ev := <-got:
+		if ev != webhooks.EventExecutionStarted {
+			t.Fatalf("event %q", ev)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not deliver")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+}

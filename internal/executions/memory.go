@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
 )
@@ -39,7 +40,7 @@ func (m *MemoryRepository) List(_ context.Context, p ListParams) ([]Execution, e
 	var out []Execution
 	for _, e := range m.execs {
 		if (p.ApplicationID != "" && e.ApplicationID != p.ApplicationID) || (p.TaskID != "" && e.TaskID != p.TaskID) || (p.Status != "" && e.Status != p.Status) ||
-			(p.Cursor != "" && e.ID >= p.Cursor) {
+			(p.Cursor != "" && e.ID >= p.Cursor) || (p.Since != nil && e.CreatedAt.Before(*p.Since)) || (p.Until != nil && !e.CreatedAt.Before(*p.Until)) {
 			continue
 		}
 		out = append(out, e)
@@ -71,4 +72,19 @@ func (m *MemoryRepository) Enqueue(ctx context.Context, e Execution) (Execution,
 	}
 	m.execs[e.ID] = e
 	return e, false, nil
+}
+
+// Stats summarises executions created since the given time (durations are not tracked here).
+func (m *MemoryRepository) Stats(_ context.Context, appID string, since time.Time) (Stats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := Stats{Since: since, ByStatus: map[string]int{}}
+	for _, e := range m.execs {
+		if (appID == "" || e.ApplicationID == appID) && !e.CreatedAt.Before(since) {
+			st.ByStatus[e.Status]++
+			st.Total++
+		}
+	}
+	st.SuccessRate = successRate(st.ByStatus)
+	return st, nil
 }

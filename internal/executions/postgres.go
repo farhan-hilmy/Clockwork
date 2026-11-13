@@ -71,6 +71,12 @@ func (r *PostgresRepository) List(ctx context.Context, p ListParams) ([]Executio
 	if p.Status != "" {
 		where = append(where, "e.status = "+arg(p.Status))
 	}
+	if p.Since != nil {
+		where = append(where, "e.created_at >= "+arg(*p.Since))
+	}
+	if p.Until != nil {
+		where = append(where, "e.created_at < "+arg(*p.Until))
+	}
 	if p.Cursor != "" {
 		where = append(where, "e.id < "+arg(p.Cursor))
 	}
@@ -148,4 +154,53 @@ func Load(ctx context.Context, q RowQuerier, id string) (Execution, error) {
 		return Execution{}, ErrNotFound
 	}
 	return e, err
+}
+
+// Stats summarises executions created since the given time. appID "" covers every application.
+func (r *PostgresRepository) Stats(ctx context.Context, appID string, since time.Time) (Stats, error) {
+	st := Stats{Since: since, ByStatus: map[string]int{}}
+	rows, err := r.db.Query(ctx, `SELECT status, count(*) FROM executions
+		WHERE created_at >= $1 AND ($2::text = '' OR application_id = $2::text) GROUP BY status`, since, appID)
+	if err != nil {
+		return Stats{}, err
+	}
+	for rows.Next() {
+		var status string
+		var n int
+		if err := rows.Scan(&status, &n); err != nil {
+			rows.Close()
+			return Stats{}, err
+		}
+		st.ByStatus[status] = n
+		st.Total += n
+	}
+	if err := rows.Err(); err != nil {
+		return Stats{}, err
+	}
+	var avg, p95 *float64
+	if err := r.db.QueryRow(ctx, `SELECT avg(duration_ms), percentile_cont(0.95) WITHIN GROUP (ORDER BY duration_ms)
+		FROM executions WHERE created_at >= $1 AND ($2::text = '' OR application_id = $2::text) AND duration_ms IS NOT NULL
+		AND status IN ('succeeded', 'failed')`, since, appID).Scan(&avg, &p95); err != nil {
+		return Stats{}, err
+	}
+	st.AvgDurationMS, st.P95DurationMS = roundMS(avg), roundMS(p95)
+	st.SuccessRate = successRate(st.ByStatus)
+	return st, nil
+}
+
+func roundMS(v *float64) *int64 {
+	if v == nil {
+		return nil
+	}
+	n := int64(*v + 0.5)
+	return &n
+}
+
+func successRate(by map[string]int) *float64 {
+	ok, bad := by[StatusSucceeded], by[StatusFailed]
+	if ok+bad == 0 {
+		return nil
+	}
+	r := float64(ok) / float64(ok+bad)
+	return &r
 }

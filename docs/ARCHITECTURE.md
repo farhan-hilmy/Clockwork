@@ -150,4 +150,4 @@ Integrations for repository sync, social scheduling and Entropy are separate app
 | M4 Reliability | `SKIP LOCKED` claiming, concurrency policy, lease recovery, graceful shutdown | concurrent-worker and crash-recovery tests pass |
 | M5 Integration | apps and API keys, ownership, idempotency keys, OpenAPI, example integration | app A cannot see app B's tasks or executions |
 | M6 Webhooks | lifecycle events, signed delivery, retries, delivery log | events delivered with signature; failures retried and tracked |
-| M7 Polish | dashboard, integrations view, filters, docs, test coverage | the 16-point definition of done passes |
+| M7 Polish | dashboard, integrations view, filters, docs, test coverage, CI | the 16-point [definition of done](DEFINITION_OF_DONE.md) passes |

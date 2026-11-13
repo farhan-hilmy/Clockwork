@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { api, type Task } from "../api";
+import { api, type RunnerType, type Task } from "../api";
 import { formatDateTime, runnerSummary } from "../format";
 import { Badge, Button, Card, ConfirmDialog, EmptyState, ErrorState, PageHeader, Spinner, inputClass } from "../ui";
 
@@ -12,6 +12,7 @@ export function Tasks() {
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
+  const [runner, setRunner] = useState<RunnerType | "">("");
   const [tasks, setTasks] = useState<Task[]>([]);
   const [cursor, setCursor] = useState<string | undefined>();
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
@@ -30,6 +31,7 @@ export function Tasks() {
     q: debounced,
     application_id: appId,
     enabled: filter === "all" ? undefined : filter === "enabled",
+    runner,
     limit: 25,
   };
 
@@ -53,7 +55,7 @@ export function Tasks() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debounced, filter, appId, nonce]);
+  }, [debounced, filter, runner, appId, nonce]);
 
   async function loadMore() {
     if (!cursor) return;
@@ -94,7 +96,7 @@ export function Tasks() {
     }
   }
 
-  const filtering = debounced !== "" || filter !== "all" || appId !== "";
+  const filtering = debounced !== "" || filter !== "all" || runner !== "" || appId !== "";
 
   return (
     <>
@@ -129,6 +131,16 @@ export function Tasks() {
             </button>
           ))}
         </div>
+        <select
+          aria-label="Filter by runner"
+          className={`${inputClass} max-w-[160px] bg-surface`}
+          value={runner}
+          onChange={(e) => setRunner(e.target.value as RunnerType | "")}
+        >
+          <option value="">All runners</option>
+          <option value="http">HTTP</option>
+          <option value="shell">Shell</option>
+        </select>
         {appId && (
           <Button variant="ghost" onClick={() => setParams({})}>
             Clear application filter ×

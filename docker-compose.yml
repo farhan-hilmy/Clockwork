@@ -28,6 +28,17 @@ services:
       CLOCKWORK_ENABLE_SHELL: ${CLOCKWORK_ENABLE_SHELL:-false}
       CLOCKWORK_LOG_FORMAT: ${CLOCKWORK_LOG_FORMAT:-json}
       CLOCKWORK_LOG_LEVEL: ${CLOCKWORK_LOG_LEVEL:-info}
+      CLOCKWORK_WORKERS: ${CLOCKWORK_WORKERS:-4}
+      CLOCKWORK_SHUTDOWN_TIMEOUT: ${CLOCKWORK_SHUTDOWN_TIMEOUT:-30s}
+      CLOCKWORK_MISFIRE_GRACE: ${CLOCKWORK_MISFIRE_GRACE:-1m}
+      CLOCKWORK_HTTP_DENY_PRIVATE: ${CLOCKWORK_HTTP_DENY_PRIVATE:-false}
+      CLOCKWORK_APP_HTTP_ALLOW_PRIVATE: ${CLOCKWORK_APP_HTTP_ALLOW_PRIVATE:-false}
+    # Lets tasks and webhooks address services on the Docker host as host.docker.internal
+    # (built into Docker Desktop; needed on Linux).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # SIGTERM gives running executions CLOCKWORK_SHUTDOWN_TIMEOUT to finish; allow a little more.
+    stop_grace_period: 45s
     ports:
       # Bound to localhost only. Put a TLS reverse proxy in front before exposing it.
       - "127.0.0.1:${CLOCKWORK_PORT:-8080}:8080"

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
@@ -19,8 +20,20 @@ type executionHandlers struct {
 
 func (h *executionHandlers) list(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	p := executions.ListParams{TaskID: q.Get("task_id"), Status: q.Get("status"), Cursor: q.Get("cursor")}
-	p.ApplicationID = principal(r).AppID() // "" for the admin: every application
+	p := executions.ListParams{ApplicationID: q.Get("application_id"), TaskID: q.Get("task_id"), Status: q.Get("status"), Cursor: q.Get("cursor")}
+	if app := principal(r).AppID(); app != "" {
+		p.ApplicationID = app // an application only ever lists its own executions
+	}
+	for name, dst := range map[string]**time.Time{"since": &p.Since, "until": &p.Until} {
+		if v := q.Get(name); v != "" {
+			t, err := time.Parse(time.RFC3339, v)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid_parameter", name+" must be an RFC 3339 timestamp, such as 2026-11-12T00:00:00Z", nil)
+				return
+			}
+			*dst = &t
+		}
+	}
 	if v := q.Get("limit"); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n < 1 || n > 200 {
@@ -39,6 +52,32 @@ func (h *executionHandlers) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// statsWindows are the windows GET /stats accepts.
+var statsWindows = map[string]time.Duration{"1h": time.Hour, "24h": 24 * time.Hour, "7d": 7 * 24 * time.Hour, "30d": 30 * 24 * time.Hour}
+
+// stats summarises recent executions, for the caller's application or, for the admin, all of them.
+func (h *executionHandlers) stats(w http.ResponseWriter, r *http.Request) {
+	window := r.URL.Query().Get("window")
+	if window == "" {
+		window = "24h"
+	}
+	d, ok := statsWindows[window]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid_parameter", "window must be one of 1h, 24h, 7d, 30d", nil)
+		return
+	}
+	appID := r.URL.Query().Get("application_id")
+	if app := principal(r).AppID(); app != "" {
+		appID = app
+	}
+	st, err := h.svc.Stats(r.Context(), appID, d)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"window": window, "executions": st})
 }
 
 func (h *executionHandlers) get(w http.ResponseWriter, r *http.Request) {

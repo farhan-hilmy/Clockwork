@@ -155,7 +155,8 @@ type UpdateInput struct {
 type ListParams struct {
 	ApplicationID string
 	Enabled       *bool
-	Query         string // case-insensitive substring of the name
+	RunnerType    RunnerType // "" for any
+	Query         string     // case-insensitive substring of the name
 	Limit         int
 	Cursor        string // return tasks with id < Cursor
 }
