@@ -128,6 +128,10 @@ Secret-looking headers, query parameters and environment variables (`Authorizati
 
 [examples/integration](examples/integration) is a small client that follows these patterns.
 
+### AI agents (MCP)
+
+`clockwork-mcp` lets AI agents such as Claude Code manage an application's tasks through MCP tools: create, update, pause, run, and read runs and stats. It uses an application API key, so the agent gets that application's view and restrictions, and it refuses the admin token. Run output is returned marked as untrusted. Setup and the tool list: [docs/MCP.md](docs/MCP.md).
+
 ### Webhooks
 
 An application (or the operator, for any application) registers endpoints that receive its events as signed JSON `POST`s:

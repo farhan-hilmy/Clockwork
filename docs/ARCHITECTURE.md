@@ -37,6 +37,7 @@ One Go binary and one PostgreSQL database. There is no Redis, message broker or 
 | `runners` | `Runner` interface plus `http` and `shell` implementations. | M3 |
 | `apps` | Application identity, API keys, ownership checks. | M5 |
 | `webhooks` | Endpoint registration, event outbox, signed delivery (dispatcher), retries, delivery log. | M6 |
+| `mcpserver` (+ `cmd/clockwork-mcp`) | MCP server over stdio for AI agents: a client of `/api/v1` with one application key, never part of the server process. | M8 |
 
 These boundaries are enforced by direction of imports: `httpapi` → `tasks`/`apps`/… → `store`. Domain packages never import `httpapi`, and runners never import the scheduler.
 
@@ -151,3 +152,9 @@ Integrations for repository sync, social scheduling and Entropy are separate app
 | M5 Integration | apps and API keys, ownership, idempotency keys, OpenAPI, example integration | app A cannot see app B's tasks or executions |
 | M6 Webhooks | lifecycle events, signed delivery, retries, delivery log | events delivered with signature; failures retried and tracked |
 | M7 Polish | dashboard, integrations view, filters, docs, test coverage, CI | the 16-point [definition of done](DEFINITION_OF_DONE.md) passes |
+
+After the MVP:
+
+| # | Scope | Exit criteria |
+|---|---|---|
+| M8 MCP server | `clockwork-mcp`: task, run and stats tools for AI agents, application key only, untrusted run output marked ([MCP.md](MCP.md)) | a stdio client creates, runs and reads a task with an application key; the admin token is refused; applications stay isolated |
