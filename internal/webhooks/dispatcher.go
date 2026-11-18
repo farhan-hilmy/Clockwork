@@ -83,18 +83,41 @@ func (d *Dispatcher) clock() time.Time { return d.o.Now().UTC().Truncate(time.Mi
 // Run sends deliveries until ctx is canceled, then waits for sends in flight.
 func (d *Dispatcher) Run(ctx context.Context) {
 	d.o.Logger.Info("webhook dispatcher started", "workers", d.o.Workers)
+	// A continuously refilled pool: a slow or hanging endpoint occupies one slot
+	// for at most Timeout, and every other slot keeps delivering meanwhile.
+	slots := make(chan struct{}, d.o.Workers)
+	freed := make(chan struct{}, d.o.Workers)
+	var wg sync.WaitGroup
+	defer wg.Wait()
 	for {
-		n, err := d.DispatchOnce(ctx)
-		if err != nil && ctx.Err() == nil {
-			d.o.Logger.Error("webhook dispatch failed", "err", err)
-		}
-		if n > 0 && ctx.Err() == nil {
-			continue // more may be due right away
+		free := cap(slots) - len(slots)
+		if free > 0 {
+			batch, err := d.claim(ctx, free)
+			if err != nil && ctx.Err() == nil {
+				d.o.Logger.Error("webhook dispatch failed", "err", err)
+			}
+			for _, c := range batch {
+				slots <- struct{}{}
+				wg.Go(func() {
+					defer func() {
+						<-slots
+						select {
+						case freed <- struct{}{}:
+						default:
+						}
+					}()
+					d.deliver(ctx, c)
+				})
+			}
+			if len(batch) == free && ctx.Err() == nil {
+				continue // more may be due right away
+			}
 		}
 		select {
 		case <-ctx.Done():
 			d.o.Logger.Info("webhook dispatcher stopped")
 			return
+		case <-freed: // a slot opened up: claim again
 		case <-time.After(d.o.PollInterval):
 		}
 	}
@@ -109,6 +132,20 @@ type claim struct {
 // DispatchOnce claims a batch of due deliveries, sends them concurrently and
 // records each result. It returns how many it sent.
 func (d *Dispatcher) DispatchOnce(ctx context.Context) (int, error) {
+	batch, err := d.claim(ctx, d.o.Workers)
+	if err != nil {
+		return 0, err
+	}
+	var wg sync.WaitGroup
+	for _, c := range batch {
+		wg.Go(func() { d.deliver(ctx, c) })
+	}
+	wg.Wait()
+	return len(batch), nil
+}
+
+// claim reserves up to n due deliveries for sending.
+func (d *Dispatcher) claim(ctx context.Context, n int) ([]claim, error) {
 	now := d.clock()
 	rows, err := d.db.Query(ctx, `WITH due AS (
 			SELECT w.id FROM webhook_deliveries w JOIN webhook_endpoints e ON e.id = w.endpoint_id
@@ -121,9 +158,9 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) (int, error) {
 		FROM due, webhook_endpoints e
 		WHERE w.id = due.id AND e.id = w.endpoint_id
 		RETURNING w.id, w.endpoint_id, w.application_id, w.event_id, w.event_type, w.payload, w.attempts, e.url, e.secret`,
-		now, d.o.Workers, now.Add(d.o.Lease))
+		now, n, now.Add(d.o.Lease))
 	if err != nil {
-		return 0, fmt.Errorf("claim deliveries: %w", err)
+		return nil, fmt.Errorf("claim deliveries: %w", err)
 	}
 	batch, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (claim, error) {
 		var c claim
@@ -131,14 +168,9 @@ func (d *Dispatcher) DispatchOnce(ctx context.Context) (int, error) {
 		return c, err
 	})
 	if err != nil {
-		return 0, fmt.Errorf("claim deliveries: %w", err)
+		return nil, fmt.Errorf("claim deliveries: %w", err)
 	}
-	var wg sync.WaitGroup
-	for _, c := range batch {
-		wg.Go(func() { d.deliver(ctx, c) })
-	}
-	wg.Wait()
-	return len(batch), nil
+	return batch, nil
 }
 
 const maxResponseExcerpt = 1024

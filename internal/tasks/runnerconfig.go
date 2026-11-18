@@ -236,6 +236,18 @@ func restoreMasked(incoming, stored Runner, fe fieldErrors) Runner {
 		if decodeStrict(incoming.Config, &in) != nil || json.Unmarshal(stored.Config, &old) != nil {
 			return incoming
 		}
+		if old.URL != "" && !sameOrigin(in.URL, old.URL) {
+			// A masked value would otherwise send the stored secret to a new host
+			// chosen by whoever edits the task. Secrets must be entered again.
+			old.Headers, old.Query = nil, nil
+			restore = func(in, _ map[string]string, field string) {
+				for k, v := range in {
+					if v == Mask {
+						fe.add(field, "%q is masked, but the URL now points to a different scheme, host or port: enter the secret value again", k)
+					}
+				}
+			}
+		}
 		restore(in.Headers, old.Headers, "runner.config.headers")
 		restore(in.Query, old.Query, "runner.config.query")
 		incoming.Config = mustJSON(in)
@@ -248,6 +260,26 @@ func restoreMasked(incoming, stored Runner, fe fieldErrors) Runner {
 		incoming.Config = mustJSON(in)
 	}
 	return incoming
+}
+
+// sameOrigin reports whether two URLs share scheme, host and port.
+func sameOrigin(a, b string) bool {
+	ua, errA := url.Parse(strings.TrimSpace(a))
+	ub, errB := url.Parse(strings.TrimSpace(b))
+	if errA != nil || errB != nil {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Hostname(), ub.Hostname()) && effectivePort(ua) == effectivePort(ub)
+}
+
+func effectivePort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }
 
 func mustJSON(v any) json.RawMessage {

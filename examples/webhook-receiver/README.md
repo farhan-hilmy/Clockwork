@@ -6,7 +6,7 @@ A receiver must:
 
 1. **Verify the signature.** `Clockwork-Signature: t=<unix seconds>,v1=<hex>`, where the hex value is HMAC-SHA256 of `"<t>.<raw body>"` keyed with the endpoint's secret. Compare in constant time, and reject timestamps more than a few minutes old to stop replays. Verify the raw bytes, before parsing the JSON.
 2. **Answer 2xx quickly.** Anything else, a redirect, or no answer within 10 seconds is retried: after 10s, 30s, 2m, 10m, 30m, 1h, 3h, 6h and 15h, for 10 attempts in total, then the delivery is marked `failed`. Do slow work asynchronously.
-3. **Deduplicate on `Clockwork-Delivery`.** Delivery is at-least-once, and a retry keeps the same delivery ID.
+3. **Deduplicate on the event `id` in the verified body.** Delivery is at-least-once, and a retry carries the same event. Don't rely on the `Clockwork-Delivery` header for this: it isn't covered by the signature.
 
 Other headers: `Clockwork-Event` (for example `execution.failed`) and `Clockwork-Event-Id`.
 

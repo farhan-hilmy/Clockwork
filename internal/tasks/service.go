@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -20,19 +21,27 @@ type Repository interface {
 	Update(ctx context.Context, t Task) error
 	Delete(ctx context.Context, id string) error
 	ApplicationExists(ctx context.Context, id string) (bool, error)
+	// CountByApplication returns how many tasks an application owns.
+	CountByApplication(ctx context.Context, appID string) (int, error)
 }
 
 // Service implements task CRUD with validation. All returned tasks are redacted.
 type Service struct {
-	repo       Repository
-	now        func() time.Time
-	allowShell bool
+	repo          Repository
+	now           func() time.Time
+	allowShell    bool
+	appMaxTasks   int
+	appMaxTimeout time.Duration
 }
 
 // Options configures a Service.
 type Options struct {
 	AllowShell bool
-	Now        func() time.Time // injectable clock for tests; defaults to time.Now
+	// AppMaxTasks and AppMaxTimeout limit applications' tasks; zero means no limit.
+	// The default application is exempt.
+	AppMaxTasks   int
+	AppMaxTimeout time.Duration
+	Now           func() time.Time // injectable clock for tests; defaults to time.Now
 }
 
 // NewService builds a Service.
@@ -41,7 +50,8 @@ func NewService(repo Repository, opts Options) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	return &Service{repo: repo, now: func() time.Time { return now().UTC().Truncate(time.Microsecond) }, allowShell: opts.AllowShell}
+	return &Service{repo: repo, now: func() time.Time { return now().UTC().Truncate(time.Microsecond) }, allowShell: opts.AllowShell,
+		appMaxTasks: opts.AppMaxTasks, appMaxTimeout: opts.AppMaxTimeout}
 }
 
 // ShellEnabled reports whether shell tasks may be created.
@@ -88,6 +98,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (Task, error) {
 	}
 	if !ok {
 		return Task{}, &ValidationError{Fields: map[string]string{"application_id": "unknown application"}}
+	}
+	if t.ApplicationID != DefaultApplicationID && s.appMaxTasks > 0 {
+		n, err := s.repo.CountByApplication(ctx, t.ApplicationID)
+		if err != nil {
+			return Task{}, err
+		}
+		if n >= s.appMaxTasks {
+			return Task{}, fmt.Errorf("%w: this application already has %d tasks (CLOCKWORK_APP_MAX_TASKS)", ErrLimit, n)
+		}
 	}
 	if err := s.repo.Create(ctx, t); err != nil {
 		return Task{}, err
@@ -198,8 +217,15 @@ func (s *Service) finalize(t *Task, fe fieldErrors) error {
 		fe.add("description", "must be at most 2000 characters")
 	}
 	t.Runner = normalizeRunner(t.Runner, s.allowShell, fe)
+	if t.Runner.Type == RunnerShell && t.ApplicationID != DefaultApplicationID {
+		// An application could otherwise trigger, reschedule and read the output
+		// of host commands the operator put under it.
+		fe.add("runner.type", "shell tasks can only belong to the default %s application", DefaultApplicationID)
+	}
 	if t.TimeoutSeconds < 1 || t.TimeoutSeconds > 86400 {
 		fe.add("timeout_seconds", "must be between 1 and 86400")
+	} else if limit := int(s.appMaxTimeout / time.Second); t.ApplicationID != DefaultApplicationID && limit > 0 && t.TimeoutSeconds > limit {
+		fe.add("timeout_seconds", "must be at most %d for application tasks (CLOCKWORK_APP_MAX_TIMEOUT)", limit)
 	}
 	r := t.Retry
 	if r.MaxAttempts < 1 || r.MaxAttempts > 20 {

@@ -113,6 +113,18 @@ func (m *MemoryRepository) Delete(_ context.Context, id string) error {
 	return nil
 }
 
+func (m *MemoryRepository) CountByApplication(_ context.Context, appID string) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, t := range m.tasks {
+		if t.ApplicationID == appID {
+			n++
+		}
+	}
+	return n, nil
+}
+
 func (m *MemoryRepository) ApplicationExists(_ context.Context, id string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

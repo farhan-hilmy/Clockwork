@@ -59,7 +59,11 @@ func run() error {
 	}
 	logger.Info("database ready")
 
-	taskSvc := tasks.NewService(tasks.NewPostgresRepository(pool), tasks.Options{AllowShell: cfg.EnableShell})
+	taskSvc := tasks.NewService(tasks.NewPostgresRepository(pool), tasks.Options{
+		AllowShell:    cfg.EnableShell,
+		AppMaxTasks:   cfg.AppMaxTasks,
+		AppMaxTimeout: cfg.AppMaxTimeout,
+	})
 	if cfg.EnableShell {
 		logger.Warn("shell runner is ENABLED: anyone with the admin token can run commands as this process's user")
 	}
@@ -89,6 +93,8 @@ func run() error {
 		Logger:        logger,
 		// Applications' HTTP tasks may only reach public addresses unless the operator allows more.
 		AppsMayReachPrivate: cfg.AppHTTPAllowPrivate,
+		AppMaxRunning:       cfg.AppMaxRunning,
+		AppMaxTimeout:       cfg.AppMaxTimeout,
 	})
 	var background sync.WaitGroup
 	background.Go(func() { sched.Run(ctx) })
@@ -109,12 +115,15 @@ func run() error {
 		logger.Info("stopped")
 	}()
 
+	webhookSvc := webhooks.NewService(pool, nil)
+	webhookSvc.MaxPerApplication = cfg.AppMaxWebhooks
+
 	srv := &http.Server{
 		Addr: cfg.HTTPAddr,
 		Handler: httpapi.NewRouter(httpapi.Deps{
 			Tasks:      taskSvc,
 			Executions: executions.NewService(executions.NewPostgresRepository(pool), nil),
-			Webhooks:   webhooks.NewService(pool, nil),
+			Webhooks:   webhookSvc,
 			Retention:  cfg.Retention,
 			Apps:       apps.NewService(apps.NewPostgresRepository(pool), nil),
 			DB:         pool,

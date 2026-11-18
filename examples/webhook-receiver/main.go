@@ -8,8 +8,9 @@
 //     old timestamps (replays).
 //  2. Answer 2xx quickly. Anything else, or no answer within 10 seconds, is
 //     retried with growing delays for about a day.
-//  3. Deduplicate on Clockwork-Delivery: delivery is at-least-once, and a
-//     retried delivery keeps its ID.
+//  3. Deduplicate on the event "id" in the verified body: delivery is
+//     at-least-once, and a retried delivery carries the same event. (The
+//     Clockwork-Delivery header is not covered by the signature.)
 //
 // Usage:
 //
@@ -103,19 +104,21 @@ func main() {
 			http.Error(w, "invalid signature", http.StatusUnauthorized)
 			return
 		}
-		delivery := r.Header.Get("Clockwork-Delivery")
+		var ev event
+		if err := json.Unmarshal(body, &ev); err != nil || ev.ID == "" {
+			http.Error(w, "bad event", http.StatusBadRequest)
+			return
+		}
 		mu.Lock()
-		dup := seen[delivery]
-		seen[delivery] = true
+		dup := seen[ev.ID]
+		seen[ev.ID] = true
 		mu.Unlock()
 		if dup {
-			log.Printf("duplicate delivery %s ignored", delivery)
+			log.Printf("duplicate event %s ignored", ev.ID)
 			w.WriteHeader(http.StatusOK) // still 2xx, so Clockwork stops retrying
 			return
 		}
 
-		var ev event
-		_ = json.Unmarshal(body, &ev)
 		x := ev.Data.Execution
 		if x.ID != "" {
 			log.Printf("%s: task %q execution %s attempt %d is %s", ev.Type, x.TaskName, x.ID, x.Attempt, x.Status)

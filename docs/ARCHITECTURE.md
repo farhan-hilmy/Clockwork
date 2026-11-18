@@ -98,7 +98,7 @@ Tasks without a schedule have no place to set the policy and use `forbid`.
 - **Dispatcher:** it claims due deliveries with `FOR UPDATE SKIP LOCKED`. In the same statement it increments `attempts` and moves `next_attempt_at` one minute ahead as a lease. If the dispatcher dies mid-send, the delivery simply becomes due again; no recovery sweep is needed.
 - **Recording:** the outcome is written only if `attempts` still matches, so a concurrent redeliver is not overwritten.
 - **Retries:** after 10s, 30s, 2m, 10m, 30m, 1h, 3h, 6h and 15h; after 10 attempts the delivery is `failed`. Redirects are not followed, and the same private-address rule as HTTP tasks applies.
-- **Signing:** `Clockwork-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`, computed at send time, so retries carry a fresh timestamp. `Clockwork-Delivery` stays the same across retries.
+- **Signing:** `Clockwork-Signature: t=<unix>,v1=<hex HMAC-SHA256(secret, "<t>.<body>")>`, computed at send time, so retries carry a fresh timestamp. Receivers deduplicate on the event `id` in the signed body. `Clockwork-Delivery` is informational and not signed.
 - **Secrets:** stored as is, because HMAC needs them. They are returned only on create and rotate, and rotation takes effect immediately.
 
 ## 4. APIs

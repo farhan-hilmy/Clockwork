@@ -37,6 +37,12 @@ type Config struct {
 	// Retention is how long finished run history and webhook deliveries are kept.
 	// Zero keeps them forever.
 	Retention time.Duration
+
+	// Limits for applications (API-key holders). The default application is exempt.
+	AppMaxTasks    int           // tasks per application
+	AppMaxWebhooks int           // webhook endpoints per application
+	AppMaxTimeout  time.Duration // longest timeout an application task may have
+	AppMaxRunning  int           // executions of one application running at once
 }
 
 // Load reads configuration using getenv (os.Getenv in production) and validates it.
@@ -108,11 +114,24 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("CLOCKWORK_APP_HTTP_ALLOW_PRIVATE cannot be true while CLOCKWORK_HTTP_DENY_PRIVATE is true"))
 	}
 
+	cfg.AppMaxTasks = positiveInt(get, "CLOCKWORK_APP_MAX_TASKS", "500", &errs)
+	cfg.AppMaxWebhooks = positiveInt(get, "CLOCKWORK_APP_MAX_WEBHOOKS", "20", &errs)
+	cfg.AppMaxRunning = positiveInt(get, "CLOCKWORK_APP_MAX_RUNNING", "2", &errs)
+	cfg.AppMaxTimeout = duration(get, "CLOCKWORK_APP_MAX_TIMEOUT", "5m", time.Second, 24*time.Hour, &errs)
+
 	if cfg.Retention, err = ParseRetention(get("CLOCKWORK_RETENTION", "")); err != nil {
 		errs = append(errs, fmt.Errorf("CLOCKWORK_RETENTION: %w", err))
 	}
 
 	return cfg, errors.Join(errs...)
+}
+
+func positiveInt(get func(string, string) string, key, def string, errs *[]error) int {
+	n, err := strconv.Atoi(get(key, def))
+	if err != nil || n < 1 {
+		*errs = append(*errs, fmt.Errorf("%s must be a whole number of at least 1", key))
+	}
+	return n
 }
 
 // MinRetention guards against a typo such as "90m" wiping history.

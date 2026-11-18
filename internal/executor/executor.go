@@ -57,6 +57,14 @@ type Options struct {
 	// can read its executions' output, so reaching internal services would let an
 	// API key holder read them.
 	AppsMayReachPrivate bool
+	// AppMaxRunning caps how many executions of one application run at once;
+	// further ones wait in the queue while other applications' runs proceed.
+	// Zero means no limit. The default application is exempt. Concurrent claims
+	// can exceed the cap briefly, by at most the number of workers.
+	AppMaxRunning int
+	// AppMaxTimeout caps an application task's timeout at run time, including
+	// tasks saved before the limit existed. Zero means no cap.
+	AppMaxTimeout time.Duration
 	// Now is an injectable clock for tests. Defaults to time.Now.
 	Now    func() time.Time
 	Logger *slog.Logger
@@ -72,6 +80,8 @@ type Pool struct {
 	recovery time.Duration
 	runners  map[tasks.RunnerType]runners.Runner
 	appsPriv bool
+	appMax   int
+	appTO    time.Duration
 	now      func() time.Time
 	log      *slog.Logger
 }
@@ -79,7 +89,7 @@ type Pool struct {
 // New builds a Pool.
 func New(db *pgxpool.Pool, o Options) *Pool {
 	p := &Pool{db: db, workers: o.Workers, poll: o.PollInterval, grace: o.ShutdownGrace,
-		lease: o.Lease, recovery: o.RecoveryInterval, runners: o.Runners, appsPriv: o.AppsMayReachPrivate, now: o.Now, log: o.Logger}
+		lease: o.Lease, recovery: o.RecoveryInterval, runners: o.Runners, appsPriv: o.AppsMayReachPrivate, appMax: o.AppMaxRunning, appTO: o.AppMaxTimeout, now: o.Now, log: o.Logger}
 	if p.workers <= 0 {
 		p.workers = 4
 	}
@@ -220,9 +230,11 @@ func (p *Pool) claimOne(ctx context.Context) (claimed, claimOutcome, error) {
 				t.max_attempts, t.backoff_initial_seconds, t.backoff_max_seconds
 			FROM executions e JOIN tasks t ON t.id = e.task_id
 			WHERE e.status = 'queued' AND e.run_after <= $1
+			  AND (e.application_id = $2 OR $3 <= 0 OR (
+			      SELECT count(*) FROM executions r WHERE r.application_id = e.application_id AND r.status = 'running') < $3)
 			ORDER BY e.run_after, e.id
 			LIMIT 1
-			FOR UPDATE OF e SKIP LOCKED`, now,
+			FOR UPDATE OF e SKIP LOCKED`, now, tasks.DefaultApplicationID, p.appMax,
 		).Scan(&e.id, &e.taskID, &e.appID, &e.trigger, &e.number, &e.scheduledFor,
 			&rtype, &e.config, &secs, &policy,
 			&e.retry.MaxAttempts, &e.retry.BackoffInitialSeconds, &e.retry.BackoffMaxSeconds)
@@ -377,13 +389,22 @@ func (p *Pool) run(ctx context.Context, e claimed) (out json.RawMessage, err err
 	if !ok {
 		return nil, &runners.Failure{Kind: runners.KindConfig, Message: fmt.Sprintf("the %s runner is not enabled on this server", e.runnerType)}
 	}
+	if e.runnerType == tasks.RunnerShell && e.appID != tasks.DefaultApplicationID {
+		// Defence in depth: validation already refuses this, but a row written
+		// before that rule (or by hand) must not run host commands for an application.
+		return nil, &runners.Failure{Kind: runners.KindConfig, Message: "shell tasks can only run in the default application"}
+	}
 	defer func() {
 		// A runner bug must not take down the worker pool.
 		if rec := recover(); rec != nil {
 			out, err = nil, &runners.Failure{Kind: runners.KindInternal, Message: fmt.Sprintf("runner panicked: %v", rec)}
 		}
 	}()
-	tctx, cancel := context.WithTimeout(ctx, e.timeout)
+	timeout := e.timeout
+	if p.appTO > 0 && e.appID != tasks.DefaultApplicationID && timeout > p.appTO {
+		timeout = p.appTO
+	}
+	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	return r.Run(tctx, runners.Request{
 		Config: e.config, ExecutionID: e.id, TaskID: e.taskID, Attempt: e.number,

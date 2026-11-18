@@ -53,8 +53,16 @@ type Failure struct {
 
 func (f *Failure) Error() string { return f.Kind + ": " + f.Message }
 
+// maxMessageLen bounds stored error messages: some (TLS and connection errors)
+// echo text a hostile target controls.
+const maxMessageLen = 512
+
 func fail(kind string, retryable bool, format string, args ...any) *Failure {
-	return &Failure{Kind: kind, Message: fmt.Sprintf(format, args...), Retryable: retryable}
+	msg := fmt.Sprintf(format, args...)
+	if len(msg) > maxMessageLen {
+		msg = strings.ToValidUTF8(msg[:maxMessageLen], "") + "…"
+	}
+	return &Failure{Kind: kind, Message: msg, Retryable: retryable}
 }
 
 // AsFailure classifies any error as a Failure. Unclassified errors are internal and not retried.

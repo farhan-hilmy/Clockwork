@@ -5,7 +5,8 @@
 // the same transaction as the change they describe: a transactional outbox, so
 // an event is never lost and never sent for a change that rolled back. The
 // Dispatcher sends due deliveries and retries failures with growing delays.
-// Delivery is at-least-once: receivers should deduplicate on Clockwork-Delivery.
+// Delivery is at-least-once: receivers should deduplicate on the event "id" in
+// the signed body. Clockwork-Delivery is informational and not signed.
 package webhooks
 
 import (
@@ -95,6 +96,8 @@ type Event struct {
 var (
 	ErrNotFound         = errors.New("webhook endpoint not found")
 	ErrDeliveryNotFound = errors.New("webhook delivery not found")
+	// ErrLimit means the application already has the most endpoints allowed.
+	ErrLimit = errors.New("limit reached")
 )
 
 // ValidationError reports invalid fields.

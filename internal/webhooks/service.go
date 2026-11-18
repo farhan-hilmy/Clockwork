@@ -28,6 +28,9 @@ type Querier interface {
 type Service struct {
 	db  *pgxpool.Pool
 	now func() time.Time
+	// MaxPerApplication caps endpoints per application (not the default one);
+	// zero means no limit.
+	MaxPerApplication int
 }
 
 // NewService builds a Service. now may be nil, meaning time.Now.
@@ -37,6 +40,9 @@ func NewService(db *pgxpool.Pool, now func() time.Time) *Service {
 	}
 	return &Service{db: db, now: func() time.Time { return now().UTC().Truncate(time.Microsecond) }}
 }
+
+// defaultApplicationID is exempt from per-application limits (operator-owned).
+const defaultApplicationID = "app_clockwork"
 
 // EndpointInput creates an endpoint.
 type EndpointInput struct {
@@ -107,6 +113,15 @@ func (s *Service) Create(ctx context.Context, in EndpointInput) (Endpoint, error
 		Events: in.Events, Enabled: true, CreatedAt: now, UpdatedAt: now, Secret: newSecret()}
 	if err := validate(&e); err != nil {
 		return Endpoint{}, err
+	}
+	if e.ApplicationID != defaultApplicationID && s.MaxPerApplication > 0 {
+		var n int
+		if err := s.db.QueryRow(ctx, `SELECT count(*) FROM webhook_endpoints WHERE application_id = $1`, e.ApplicationID).Scan(&n); err != nil {
+			return Endpoint{}, err
+		}
+		if n >= s.MaxPerApplication {
+			return Endpoint{}, fmt.Errorf("%w: this application already has %d webhook endpoints (CLOCKWORK_APP_MAX_WEBHOOKS)", ErrLimit, n)
+		}
 	}
 	_, err := s.db.Exec(ctx, `INSERT INTO webhook_endpoints (`+endpointCols+`, secret) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
 		e.ID, e.ApplicationID, e.URL, e.Description, e.Events, e.Enabled, e.CreatedAt, e.UpdatedAt, e.Secret)

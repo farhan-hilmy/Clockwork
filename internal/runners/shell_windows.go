@@ -11,3 +11,6 @@ var windowsEssentials = []string{"SYSTEMROOT", "WINDIR", "TEMP", "TMP"}
 // setProcessGroup is best effort on Windows: only the direct child is killed on
 // cancellation. Clockwork's supported deployment is Linux.
 func setProcessGroup(*exec.Cmd) {}
+
+// killGroup is a no-op on Windows (development only).
+func killGroup(*exec.Cmd) {}

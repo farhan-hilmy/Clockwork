@@ -78,6 +78,8 @@ var (
 var (
 	ErrNotFound = errors.New("task not found")
 	ErrConflict = errors.New("a task with this name already exists in the application")
+	// ErrLimit means an application limit set by the operator was reached.
+	ErrLimit = errors.New("limit reached")
 )
 
 // ValidationError reports every invalid field at once.

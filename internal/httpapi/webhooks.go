@@ -194,6 +194,8 @@ func (h *webhookHandlers) fail(w http.ResponseWriter, r *http.Request, err error
 		writeError(w, http.StatusUnprocessableEntity, "validation_failed", "one or more fields are invalid", ve.Fields)
 	case errors.Is(err, webhooks.ErrNotFound), errors.Is(err, webhooks.ErrDeliveryNotFound):
 		writeError(w, http.StatusNotFound, "not_found", err.Error(), nil)
+	case errors.Is(err, webhooks.ErrLimit):
+		writeError(w, http.StatusConflict, "limit_reached", err.Error(), nil)
 	default:
 		h.tasks.internal(w, r, err)
 	}

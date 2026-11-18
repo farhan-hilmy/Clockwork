@@ -179,6 +179,12 @@ func (r *PostgresRepository) Delete(ctx context.Context, id string) error {
 	return nil
 }
 
+func (r *PostgresRepository) CountByApplication(ctx context.Context, appID string) (int, error) {
+	var n int
+	err := r.db.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE application_id = $1`, appID).Scan(&n)
+	return n, err
+}
+
 func (r *PostgresRepository) ApplicationExists(ctx context.Context, id string) (bool, error) {
 	var ok bool
 	err := r.db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM applications WHERE id = $1)`, id).Scan(&ok)

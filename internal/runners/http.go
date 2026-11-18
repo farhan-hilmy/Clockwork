@@ -68,11 +68,21 @@ func NewClient(denyPrivate, followRedirects bool) *http.Client {
 		IdleConnTimeout:       90 * time.Second,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: time.Second,
+		// A target controls its headers; bound what one response can make us buffer.
+		MaxResponseHeaderBytes: maxResponseHeaderBytes,
 	}
 	return &http.Client{
 		Transport: transport,
-		CheckRedirect: func(_ *http.Request, via []*http.Request) error {
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if !followRedirects {
+				return http.ErrUseLastResponse
+			}
+			// Follow redirects only within the original scheme, host and port. Go
+			// forwards every custom header (API keys) and, on 307/308, the body to
+			// the new location; a cross-origin redirect chosen by an untrusted
+			// target could collect them, or steer the request into the internal
+			// network. Such a redirect is returned as the response instead.
+			if !sameOrigin(req.URL, via[0].URL) {
 				return http.ErrUseLastResponse
 			}
 			if len(via) >= 5 {
@@ -81,6 +91,32 @@ func NewClient(denyPrivate, followRedirects bool) *http.Client {
 			return nil
 		},
 	}
+}
+
+const (
+	maxResponseHeaderBytes = 64 << 10
+	maxContentTypeLen      = 256
+)
+
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) && strings.EqualFold(a.Hostname(), b.Hostname()) && portOf(a) == portOf(b)
+}
+
+func portOf(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
+}
+
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "")
 }
 
 // HTTPOutput is stored as executions.output for HTTP tasks.
@@ -140,7 +176,7 @@ func (h *HTTP) Run(ctx context.Context, req Request) (json.RawMessage, error) {
 	_, readErr := io.Copy(ex, io.LimitReader(res.Body, 1<<20))
 	out := HTTPOutput{
 		StatusCode:    res.StatusCode,
-		ContentType:   res.Header.Get("Content-Type"),
+		ContentType:   truncateUTF8(res.Header.Get("Content-Type"), maxContentTypeLen),
 		Body:          ex.String(),
 		BodyTruncated: ex.truncated(),
 		BodyBytes:     ex.total,
@@ -198,7 +234,9 @@ func IsBlocked(err error) bool {
 }
 
 func (e *blockedAddrError) Error() string {
-	return fmt.Sprintf("destination %s is not a public address, and this task may only reach public addresses", e.addr)
+	// The address is left out: it would tell the task's owner what an internal
+	// hostname resolves to.
+	return "the destination is not a public address, and this task may only reach public addresses"
 }
 
 // denyPrivateAddr runs after DNS resolution, on the exact address being dialled.
@@ -214,6 +252,12 @@ func denyPrivateAddr(_, address string, _ syscall.RawConn) error {
 }
 
 var nonPublic = []netip.Prefix{
+	// IPv6 ranges that can carry traffic to IPv4 or site-internal addresses.
+	netip.MustParsePrefix("::/96"),          // IPv4-compatible (deprecated)
+	netip.MustParsePrefix("2002::/16"),      // 6to4
+	netip.MustParsePrefix("2001::/32"),      // Teredo
+	netip.MustParsePrefix("64:ff9b:1::/48"), // local-use NAT64 (RFC 8215)
+	netip.MustParsePrefix("fec0::/10"),      // site-local (deprecated)
 	netip.MustParsePrefix("0.0.0.0/8"),
 	netip.MustParsePrefix("100.64.0.0/10"), // carrier-grade NAT
 	netip.MustParsePrefix("192.0.0.0/24"),

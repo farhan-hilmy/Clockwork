@@ -19,8 +19,10 @@ const MaxStreamExcerpt = 16 << 10
 //
 // The process gets only the task's environment variables, plus PATH (inherited
 // from Clockwork unless the task sets it) and CLOCKWORK_EXECUTION_ID,
-// CLOCKWORK_TASK_ID and CLOCKWORK_ATTEMPT. On timeout the whole process group
-// is killed, so background children do not outlive the run.
+// CLOCKWORK_TASK_ID and CLOCKWORK_ATTEMPT. When the command ends, and on
+// timeout, the whole process group is killed, so background children do not
+// outlive the run. A child that leaves the group with setsid is not reached;
+// shell tasks are admin-only.
 type Shell struct {
 	// Shell is the interpreter. Defaults to "sh".
 	Shell string
@@ -59,6 +61,7 @@ func (s *Shell) Run(ctx context.Context, req Request) (json.RawMessage, error) {
 	cmd.WaitDelay = 5 * time.Second
 
 	runErr := cmd.Run()
+	killGroup(cmd) // no background child outlives the run
 	if cmd.ProcessState == nil {
 		// The process never started: bad working directory, permissions, …
 		return nil, fail(KindConfig, false, "could not start command: %v", runErr)

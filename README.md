@@ -33,6 +33,13 @@ Pull the new version and run `docker compose up -d --build`. Database migrations
 | `00003_app_credentials` | application API keys |
 | `00004_webhooks` | webhook endpoints and the delivery outbox |
 | `00005_retention_indexes` | indexes for the retention sweep |
+| `00006_running_by_application` | an index for the per-application running limit |
+
+**Upgrading past the 2026-11-18 security fixes:**
+
+- **`POSTGRES_PASSWORD` must now be set in `.env`.** Compose no longer falls back to `clockwork`. If your database was created with that default, set `POSTGRES_PASSWORD=clockwork` to keep using it, then change the password in Postgres when convenient.
+- **Shell tasks owned by an application stop running.** They fail with a `config` error. Move them to the default application, or turn them into HTTP tasks.
+- **Application tasks with a timeout above `CLOCKWORK_APP_MAX_TIMEOUT`** (5 minutes by default) are cut off at that limit, and have to be lowered before they can be edited.
 
 Run history and webhook deliveries are kept forever unless you set `CLOCKWORK_RETENTION`, for example `90d`. With it set, a background sweep deletes finished history older than that, a minute after startup and then hourly, in batches of 1,000 rows. The setting is off by default, so upgrading never deletes data on its own. Once old runs are deleted, their `Idempotency-Key` values can be used again.
 
@@ -52,6 +59,10 @@ All configuration comes from environment variables. The server refuses to start 
 | `CLOCKWORK_SHUTDOWN_TIMEOUT` | `30s` | On SIGTERM, how long in-flight HTTP requests and running executions may continue. Executions still running after it are recorded as `interrupted` and retried if attempts remain. |
 | `CLOCKWORK_WORKERS` | `4` | How many executions may run at once (1 to 256). |
 | `CLOCKWORK_HTTP_DENY_PRIVATE` | `false` | Refuse every HTTP task whose target resolves to a loopback, link-local or private address. See [Security](#security). |
+| `CLOCKWORK_APP_MAX_TASKS` | `500` | Most tasks one application may own. |
+| `CLOCKWORK_APP_MAX_WEBHOOKS` | `20` | Most webhook endpoints one application may register. |
+| `CLOCKWORK_APP_MAX_TIMEOUT` | `5m` | Longest timeout an application task may have (1s to 24h). Also applied at run time to tasks saved earlier. |
+| `CLOCKWORK_APP_MAX_RUNNING` | `2` | Most executions of one application running at once; the rest wait while other applications' runs proceed. Several instances claiming at the same moment can briefly exceed it. |
 | `CLOCKWORK_RETENTION` | `off` | Delete finished run history and webhook deliveries older than this, for example `90d` (days) or `36h`; at least `24h`. Runs that are queued or running, and deliveries still pending, are never deleted. `off` keeps everything forever. See [Upgrading](#upgrading). |
 | `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE` | `false` | Let HTTP tasks owned by applications reach private addresses. Off by default: see [Security](#security). Cannot be combined with `CLOCKWORK_HTTP_DENY_PRIVATE=true`. |
 | `CLOCKWORK_SCHEDULER_INTERVAL` | `1s` | How often the scheduler looks for due tasks (100ms to 1m). |
@@ -149,7 +160,7 @@ An application (or the operator, for any application) registers endpoints that r
 | `webhook.test` | You asked for one with `POST /webhooks/{id}/test`. |
 
 - **Body:** `{"id": "evt_…", "type": "…", "created_at": "…", "application_id": "…", "data": {"execution": {…}}}`. `data.execution` is the execution as the API returns it, at the moment of the event.
-- **Headers:** `Clockwork-Event`, `Clockwork-Event-Id`, `Clockwork-Delivery` (stable across retries: deduplicate on it), and `Clockwork-Signature: t=<unix>,v1=<hex>`. The `v1` value is HMAC-SHA256 of `"<t>.<raw body>"`, keyed with the endpoint's secret. Verify it in constant time and reject old timestamps. [examples/webhook-receiver](examples/webhook-receiver) shows how.
+- **Headers:** `Clockwork-Event`, `Clockwork-Event-Id`, `Clockwork-Delivery`, and `Clockwork-Signature: t=<unix>,v1=<hex>`. Deduplicate on the event `id` in the body, which the signature covers; the other headers are informational. The `v1` value is HMAC-SHA256 of `"<t>.<raw body>"`, keyed with the endpoint's secret. Verify it in constant time and reject old timestamps. [examples/webhook-receiver](examples/webhook-receiver) shows how.
 - **Retries:** any answer other than 2xx, a redirect, or no answer within 10 seconds is a failure. Failures are retried after 10s, 30s, 2m, 10m, 30m, 1h, 3h, 6h and 15h, for 10 attempts, then the delivery is marked `failed`. The delivery log records every attempt's status code, error and the start of the response. Any delivery can be sent again.
 - **Ordering and duplicates:** delivery is at-least-once and not ordered. Use `data.execution.status` and timestamps, not arrival order.
 - **Event filters:** an endpoint with an empty `events` list gets every event. Pausing an endpoint holds its deliveries until it is resumed.
@@ -233,13 +244,20 @@ docker run --rm -v "$PWD:/src:ro" -w /src -e GOFLAGS=-buildvcs=false \
 ## Security
 
 - **Every API call requires a token.** The admin token has full access: treat it like a root password. Application API keys only reach their own application, and are stored as SHA-256 hashes. Compose binds the port to `127.0.0.1`. Put a TLS-terminating reverse proxy in front before exposing Clockwork to a network.
-- **Shell tasks run arbitrary commands** as the Clockwork process user, with access to anything that user can reach. They are disabled unless `CLOCKWORK_ENABLE_SHELL=true`. The Docker image runs as an unprivileged user (uid 10001). Applications can never create shell tasks, whatever this setting.
+- **Shell tasks run arbitrary commands** as the Clockwork process user, with access to anything that user can reach. They are disabled unless `CLOCKWORK_ENABLE_SHELL=true`, and only the default `app_clockwork` application can have them: an application can never own, trigger or reschedule a shell task, even one the admin creates. The executor checks this again before each run. When a command ends, its whole process group is killed. The Docker image runs as an unprivileged user (uid 10001).
 - **HTTP tasks can reach anything the server can reach**, including internal services and cloud metadata endpoints.
-  - **Application tasks** are refused loopback, link-local and private targets by default. An application can read its executions' output, so without this restriction an API key would be a way to read internal services. Set `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true` only if your applications are trusted to reach your internal network.
+  - **Application tasks and webhook endpoints** are refused loopback, link-local, private and other non-public targets by default, including IPv6 ranges that can reach IPv4 (6to4, Teredo, NAT64). An application can read its executions' output, so without this restriction an API key would be a way to read internal services. Set `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE=true` only if your applications are trusted to reach your internal network.
   - **Operator tasks** may reach private targets, unless `CLOCKWORK_HTTP_DENY_PRIVATE=true`, which refuses them for every task.
   - Both checks run on the resolved address at connect time, so DNS names pointing inward are refused too. Outbound proxies are not used.
-- Secrets in task configuration are stored in plain text in Postgres, and masked in API responses and logs. Response bodies and command output are stored as excerpts: don't have tasks print secrets.
-- Clockwork has not had a security review. Don't run it on an untrusted network or claim it is production-secure without one.
+  - **Redirects are followed only within the same scheme, host and port.** A redirect to another origin is recorded as the response and not followed, so a target cannot steer a request, its headers or its body elsewhere. Webhook deliveries follow no redirects.
+- **Secrets** in task headers, query parameters and shell environment are stored in plain text in Postgres, and masked as `********` in API responses. Sending the mask back keeps the stored value only while the URL's scheme, host and port stay the same; changing them requires entering the secret again. Secrets placed in a URL path or request body are not masked: put them in headers. Response bodies and command output are stored as excerpts, so don't have tasks print secrets.
+- **Applications are limited** so one cannot exhaust the server: `CLOCKWORK_APP_MAX_TASKS`, `CLOCKWORK_APP_MAX_WEBHOOKS`, `CLOCKWORK_APP_MAX_TIMEOUT` and `CLOCKWORK_APP_MAX_RUNNING` (see [Configuration](#configuration)). The operator's default application is exempt.
+- **The web UI** is served with a strict Content-Security-Policy (same-origin scripts and styles only, no framing), which limits what any future injection bug could do with the admin token kept in the browser.
+- **Not handled by Clockwork:**
+  - Request rate limiting. Apply it in your reverse proxy, for example on `POST /api/v1/tasks/{id}/run`.
+  - A shell command that detaches itself with `setsid` escapes the process-group cleanup. Shell tasks are admin-only.
+
+**Review status:** an internal review of the whole codebase was done on 2026-11-18. It found no break in isolation between applications, and every finding was fixed or is listed above. It was not an external audit: have one done before exposing Clockwork to an untrusted network.
 
 ## Troubleshooting
 

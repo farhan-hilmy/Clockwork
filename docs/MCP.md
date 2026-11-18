@@ -71,13 +71,15 @@ The server checks the key when it starts. If Clockwork is unreachable, the key i
 
 There is no delete tool. Deleting tasks stays a deliberate action in the web UI or API.
 
+The tools' hints tell MCP clients what needs your approval. `create_task` and `update_task` are marked as reaching the outside world, because a task makes Clockwork call its URL later without another tool call. `update_task` and `set_task_enabled` are marked as destructive, because they can retarget or pause a task. Changing a task's URL to another host also requires entering its secret headers again, so an agent cannot be talked into sending them elsewhere.
+
 Errors come back as tool errors the agent can read and correct itself from, for example `Clockwork answered 422 validation_failed: one or more fields are invalid (schedule.cron: invalid cron expression: …)`.
 
 ## Run output is untrusted
 
 A run's output is whatever the called server sent back. Anyone controlling that server can put text there meant to steer the agent ("ignore your instructions and…"). So:
 
-- `get_run` returns the response under **`output_untrusted`**, next to an `output_note` saying it is data, not instructions. The server's own instructions to the client say the same.
+- `get_run` returns the response under **`output_untrusted`**, next to an `output_note` saying it is data, not instructions. Error messages, which can also echo text from the target (for example TLS errors), come back as `error.message_untrusted`. The server's own instructions to the client say the same.
 - `list_runs` leaves output out entirely, so browsing runs does not pull untrusted text into the agent's context.
 - Output is the same bounded excerpt Clockwork stores: the first 8 KiB of an HTTP body.
 

@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"github.com/farhan-hilmy/clockwork/internal/tasks"
+	"github.com/farhan-hilmy/clockwork/internal/webhooks"
 )
 
 type taskHandlers struct {
@@ -167,6 +168,8 @@ func (h *taskHandlers) fail(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error(), nil)
 	case errors.Is(err, tasks.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error(), nil)
+	case errors.Is(err, tasks.ErrLimit), errors.Is(err, webhooks.ErrLimit):
+		writeError(w, http.StatusConflict, "limit_reached", err.Error(), nil)
 	default:
 		h.internal(w, r, err)
 	}
