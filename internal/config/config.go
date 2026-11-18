@@ -34,6 +34,9 @@ type Config struct {
 	HTTPDenyPrivate bool
 	// AppHTTPAllowPrivate lets tasks owned by external applications reach private addresses.
 	AppHTTPAllowPrivate bool
+	// Retention is how long finished run history and webhook deliveries are kept.
+	// Zero keeps them forever.
+	Retention time.Duration
 }
 
 // Load reads configuration using getenv (os.Getenv in production) and validates it.
@@ -105,7 +108,40 @@ func Load(getenv func(string) string) (Config, error) {
 		errs = append(errs, errors.New("CLOCKWORK_APP_HTTP_ALLOW_PRIVATE cannot be true while CLOCKWORK_HTTP_DENY_PRIVATE is true"))
 	}
 
+	if cfg.Retention, err = ParseRetention(get("CLOCKWORK_RETENTION", "")); err != nil {
+		errs = append(errs, fmt.Errorf("CLOCKWORK_RETENTION: %w", err))
+	}
+
 	return cfg, errors.Join(errs...)
+}
+
+// MinRetention guards against a typo such as "90m" wiping history.
+const MinRetention = 24 * time.Hour
+
+// ParseRetention reads a retention period: empty, "0" or "off" for none,
+// whole days such as "90d", or a Go duration such as "36h".
+func ParseRetention(v string) (time.Duration, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "", "0", "off":
+		return 0, nil
+	}
+	var d time.Duration
+	if days, ok := strings.CutSuffix(strings.TrimSpace(v), "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil || n < 0 {
+			return 0, fmt.Errorf("%q is not a number of days such as 90d", v)
+		}
+		d = time.Duration(n) * 24 * time.Hour
+	} else {
+		var err error
+		if d, err = time.ParseDuration(strings.TrimSpace(v)); err != nil {
+			return 0, fmt.Errorf("%q is not a period such as 90d or 36h, or off", v)
+		}
+	}
+	if d < MinRetention {
+		return 0, fmt.Errorf("must be at least 24h (got %s), or off", v)
+	}
+	return d, nil
 }
 
 // duration parses a bounded duration variable, appending an error when it is invalid.

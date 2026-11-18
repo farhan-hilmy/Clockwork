@@ -1574,6 +1574,13 @@
                 "type": "string"
               }
             }
+          },
+          "retention_days": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Admin only: how many days finished run history and webhook deliveries are kept (CLOCKWORK_RETENTION); null when kept forever."
           }
         }
       },

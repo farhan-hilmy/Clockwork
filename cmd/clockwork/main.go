@@ -19,6 +19,7 @@ import (
 	"github.com/farhan-hilmy/clockwork/internal/executions"
 	"github.com/farhan-hilmy/clockwork/internal/executor"
 	"github.com/farhan-hilmy/clockwork/internal/httpapi"
+	"github.com/farhan-hilmy/clockwork/internal/retention"
 	"github.com/farhan-hilmy/clockwork/internal/runners"
 	"github.com/farhan-hilmy/clockwork/internal/scheduler"
 	"github.com/farhan-hilmy/clockwork/internal/store"
@@ -100,6 +101,8 @@ func run() error {
 		Logger:               logger,
 	})
 	background.Go(func() { dispatcher.Run(ctx) })
+	sweeper := retention.New(pool, retention.Options{Keep: cfg.Retention, Logger: logger})
+	background.Go(func() { sweeper.Run(ctx) })
 	defer func() {
 		stop() // also covers returning on an HTTP server error
 		background.Wait()
@@ -112,6 +115,7 @@ func run() error {
 			Tasks:      taskSvc,
 			Executions: executions.NewService(executions.NewPostgresRepository(pool), nil),
 			Webhooks:   webhooks.NewService(pool, nil),
+			Retention:  cfg.Retention,
 			Apps:       apps.NewService(apps.NewPostgresRepository(pool), nil),
 			DB:         pool,
 			AdminToken: cfg.AdminToken,

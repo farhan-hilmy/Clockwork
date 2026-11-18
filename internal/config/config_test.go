@@ -69,3 +69,28 @@ func TestAppPrivateAccessCannotContradictGlobalDeny(t *testing.T) {
 		t.Fatalf("contradiction accepted: %v", err)
 	}
 }
+
+func TestParseRetention(t *testing.T) {
+	for in, want := range map[string]time.Duration{
+		"": 0, "0": 0, "off": 0, "OFF": 0, "90d": 90 * 24 * time.Hour, " 30d ": 30 * 24 * time.Hour,
+		"36h": 36 * time.Hour, "24h": 24 * time.Hour, "1d": 24 * time.Hour,
+	} {
+		got, err := ParseRetention(in)
+		if err != nil || got != want {
+			t.Errorf("ParseRetention(%q) = %v, %v; want %v", in, got, err, want)
+		}
+	}
+	for _, bad := range []string{"90m", "1h", "0d", "-5d", "ninety days", "12x"} {
+		if _, err := ParseRetention(bad); err == nil {
+			t.Errorf("ParseRetention(%q) accepted", bad)
+		}
+	}
+	base := map[string]string{"CLOCKWORK_DATABASE_URL": "postgres://x", "CLOCKWORK_ADMIN_TOKEN": "0123456789abcdef", "CLOCKWORK_RETENTION": "90m"}
+	if _, err := Load(env(base)); err == nil || !strings.Contains(err.Error(), "CLOCKWORK_RETENTION") {
+		t.Fatalf("Load with a bad retention: %v", err)
+	}
+	base["CLOCKWORK_RETENTION"] = "90d"
+	if cfg, err := Load(env(base)); err != nil || cfg.Retention != 90*24*time.Hour {
+		t.Fatalf("Load 90d: %v %v", cfg.Retention, err)
+	}
+}

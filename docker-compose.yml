@@ -33,6 +33,7 @@ services:
       CLOCKWORK_MISFIRE_GRACE: ${CLOCKWORK_MISFIRE_GRACE:-1m}
       CLOCKWORK_HTTP_DENY_PRIVATE: ${CLOCKWORK_HTTP_DENY_PRIVATE:-false}
       CLOCKWORK_APP_HTTP_ALLOW_PRIVATE: ${CLOCKWORK_APP_HTTP_ALLOW_PRIVATE:-false}
+      CLOCKWORK_RETENTION: ${CLOCKWORK_RETENTION:-off}
     # Lets tasks and webhooks address services on the Docker host as host.docker.internal
     # (built into Docker Desktop; needed on Linux).
     extra_hosts:

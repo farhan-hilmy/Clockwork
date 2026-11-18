@@ -32,8 +32,9 @@ Pull the new version and run `docker compose up -d --build`. Database migrations
 | `00002_execution_run_after` | `executions.run_after`, for retry backoff |
 | `00003_app_credentials` | application API keys |
 | `00004_webhooks` | webhook endpoints and the delivery outbox |
+| `00005_retention_indexes` | indexes for the retention sweep |
 
-The tables grow without limit: there is no automatic retention of execution history or webhook deliveries yet. Delete old rows yourself if needed, for example `DELETE FROM executions WHERE created_at < now() - interval '90 days'`.
+Run history and webhook deliveries are kept forever unless you set `CLOCKWORK_RETENTION`, for example `90d`. With it set, a background sweep deletes finished history older than that, a minute after startup and then hourly, in batches of 1,000 rows. The setting is off by default, so upgrading never deletes data on its own. Once old runs are deleted, their `Idempotency-Key` values can be used again.
 
 ## Configuration
 
@@ -51,6 +52,7 @@ All configuration comes from environment variables. The server refuses to start 
 | `CLOCKWORK_SHUTDOWN_TIMEOUT` | `30s` | On SIGTERM, how long in-flight HTTP requests and running executions may continue. Executions still running after it are recorded as `interrupted` and retried if attempts remain. |
 | `CLOCKWORK_WORKERS` | `4` | How many executions may run at once (1 to 256). |
 | `CLOCKWORK_HTTP_DENY_PRIVATE` | `false` | Refuse every HTTP task whose target resolves to a loopback, link-local or private address. See [Security](#security). |
+| `CLOCKWORK_RETENTION` | `off` | Delete finished run history and webhook deliveries older than this, for example `90d` (days) or `36h`; at least `24h`. Runs that are queued or running, and deliveries still pending, are never deleted. `off` keeps everything forever. See [Upgrading](#upgrading). |
 | `CLOCKWORK_APP_HTTP_ALLOW_PRIVATE` | `false` | Let HTTP tasks owned by applications reach private addresses. Off by default: see [Security](#security). Cannot be combined with `CLOCKWORK_HTTP_DENY_PRIVATE=true`. |
 | `CLOCKWORK_SCHEDULER_INTERVAL` | `1s` | How often the scheduler looks for due tasks (100ms to 1m). |
 | `CLOCKWORK_MISFIRE_GRACE` | `1m` | How late a run can be queued and still count as on time (1s to 24h). Later runs are misfires and follow the task's `misfire_policy`. |

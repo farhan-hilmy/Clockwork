@@ -29,6 +29,7 @@ type Deps struct {
 	Tasks      *tasks.Service
 	Executions *executions.Service
 	Webhooks   *webhooks.Service
+	Retention  time.Duration // how long finished history is kept; 0 = forever (shown to the admin in /meta)
 	Apps       *apps.Service
 	DB         Pinger
 	AdminToken string
@@ -79,12 +80,21 @@ func NewRouter(d Deps) http.Handler {
 				if !p.Admin {
 					who = map[string]any{"type": "application", "application_id": p.App.ID, "application_name": p.App.Name}
 				}
-				writeJSON(w, http.StatusOK, map[string]any{
+				meta := map[string]any{
 					"version":       d.Version,
 					"shell_enabled": shell,
 					"runners":       runnersAvailable(shell),
 					"principal":     who,
-				})
+				}
+				if p.Admin {
+					// Days, or null when history is kept forever.
+					var days any
+					if d.Retention > 0 {
+						days = d.Retention.Hours() / 24
+					}
+					meta["retention_days"] = days
+				}
+				writeJSON(w, http.StatusOK, meta)
 			})
 			api.Get("/tasks", h.list)
 			api.Post("/tasks", h.create)

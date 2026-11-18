@@ -127,6 +127,8 @@ export interface Meta {
   shell_enabled: boolean;
   runners: RunnerType[];
   principal: { type: "admin" } | { type: "application"; application_id: string; application_name: string };
+  /** Admin only: days of finished history kept (CLOCKWORK_RETENTION); null = forever. */
+  retention_days?: number | null;
 }
 
 export interface TaskPage {

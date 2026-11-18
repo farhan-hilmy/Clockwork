@@ -16,6 +16,12 @@ export function Settings() {
             <dd className="font-mono">{meta.data.version}</dd>
             <dt className="text-fg-2">Runners available</dt>
             <dd className="font-mono">{meta.data.runners.join(", ")}</dd>
+            <dt className="text-fg-2">History retention</dt>
+            <dd>
+              {meta.data.retention_days == null
+                ? "Kept forever (CLOCKWORK_RETENTION is off)"
+                : `Finished runs and webhook deliveries older than ${meta.data.retention_days} days are deleted`}
+            </dd>
             <dt className="text-fg-2">Shell runner</dt>
             <dd>{meta.data.shell_enabled ? "Enabled (CLOCKWORK_ENABLE_SHELL=true)" : "Disabled"}</dd>
           </dl>

@@ -37,6 +37,7 @@ One Go binary and one PostgreSQL database. There is no Redis, message broker or 
 | `runners` | `Runner` interface plus `http` and `shell` implementations. | M3 |
 | `apps` | Application identity, API keys, ownership checks. | M5 |
 | `webhooks` | Endpoint registration, event outbox, signed delivery (dispatcher), retries, delivery log. | M6 |
+| `retention` | Hourly sweep deleting finished executions and webhook deliveries older than `CLOCKWORK_RETENTION`, in batches. | M9 |
 | `mcpserver` (+ `cmd/clockwork-mcp`) | MCP server over stdio for AI agents: a client of `/api/v1` with one application key, never part of the server process. | M8 |
 
 These boundaries are enforced by direction of imports: `httpapi` → `tasks`/`apps`/… → `store`. Domain packages never import `httpapi`, and runners never import the scheduler.
@@ -158,3 +159,4 @@ After the MVP:
 | # | Scope | Exit criteria |
 |---|---|---|
 | M8 MCP server | `clockwork-mcp`: task, run and stats tools for AI agents, application key only, untrusted run output marked ([MCP.md](MCP.md)) | a stdio client creates, runs and reads a task with an application key; the admin token is refused; applications stay isolated |
+| M9 Retention | `CLOCKWORK_RETENTION`: batched hourly deletion of finished history, partial indexes, shown in Settings | old finished runs and deliveries are deleted; recent and unfinished ones are kept; off deletes nothing |

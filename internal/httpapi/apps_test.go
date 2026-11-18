@@ -2,11 +2,15 @@ package httpapi
 
 import (
 	"encoding/json"
+	"github.com/farhan-hilmy/clockwork/internal/apps"
+	"github.com/farhan-hilmy/clockwork/internal/tasks"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -382,5 +386,23 @@ func TestStatsAndFiltersOverHTTP(t *testing.T) {
 	}
 	if code, _, _ := req(t, env.srv, "GET", "/api/v1/tasks?runner=ftp", "", token, nil); code != 400 {
 		t.Errorf("bad runner = %d", code)
+	}
+}
+
+func TestMetaShowsRetentionToTheAdminOnly(t *testing.T) {
+	env := newTestEnv(t, fakePinger{}, "", false)
+	_, key := newApp(t, env, "app-a")
+	if _, meta, _ := req(t, env.srv, "GET", "/api/v1/meta", "", token, nil); meta["retention_days"] != nil {
+		t.Fatalf("retention off: %v", meta["retention_days"])
+	}
+	if _, meta, _ := req(t, env.srv, "GET", "/api/v1/meta", "", key, nil); func() bool { _, has := meta["retention_days"]; return has }() {
+		t.Fatalf("application sees retention: %v", meta)
+	}
+	srv := httptest.NewServer(NewRouter(Deps{Tasks: tasks.NewService(tasks.NewMemoryRepository(), tasks.Options{}),
+		Apps: apps.NewService(apps.NewMemoryRepository(), nil), AdminToken: token, Retention: 90 * 24 * time.Hour,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil))}))
+	defer srv.Close()
+	if _, meta, _ := req(t, srv, "GET", "/api/v1/meta", "", token, nil); meta["retention_days"] != float64(90) {
+		t.Fatalf("retention 90d: %v", meta["retention_days"])
 	}
 }
