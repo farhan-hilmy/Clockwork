@@ -44,8 +44,8 @@ jobs:
         # Failures are also raised as annotations, so they show on the run page.
         run: |
           set -o pipefail
-          go test -race -p 1 -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./... 2>&1 | tee test.log || {
-            grep -E -- '--- FAIL|^FAIL|panic:|_test\.go:[0-9]+:|DATA RACE' test.log | head -40 | sed 's/^/::error::/'
+          go test -race -p 1 -count=1 -timeout 5m -coverpkg=./internal/... -coverprofile=coverage.out ./... 2>&1 | tee test.log || {
+            grep -E -A3 -- '--- FAIL|^FAIL|panic:|_test\.go:[0-9]+:|DATA RACE' test.log | head -60 | sed 's/^/::error::/'
             exit 1
           }
       - name: Coverage
