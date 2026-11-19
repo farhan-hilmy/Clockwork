@@ -32,14 +32,17 @@ func TestEndpointLimitPerApplication(t *testing.T) {
 func TestHangingEndpointDoesNotStallOthers(t *testing.T) {
 	e := setup(t)
 	release := make(chan struct{})
-	defer close(release)
 	hang := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		select {
 		case <-release:
 		case <-r.Context().Done():
 		}
 	}))
+	// Deferred in this order so the handler is released before Close, which
+	// waits for it. (The handler does not read the body, so the server cannot
+	// tell the client gave up.)
 	defer hang.Close()
+	defer close(release)
 	var fast atomic.Int32
 	quick := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { fast.Add(1) }))
 	defer quick.Close()
